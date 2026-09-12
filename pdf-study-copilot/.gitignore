@@ -1,0 +1,147 @@
+# =========================
+# Python
+# =========================
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+pip-wheel-metadata/
+*.whl
+
+
+# =========================
+# Virtual environments
+# =========================
+
+.venv/
+venv/
+env/
+ENV/
+research_os_env/
+pdf_study_env/
+
+
+# =========================
+# Environment variables
+# =========================
+
+.env
+.env.local
+.env.production
+.env.development
+*.env
+
+
+# =========================
+# Secrets
+# =========================
+
+# Streamlit secrets file
+# Do NOT commit your Grok/Groq/API keys to GitHub
+.streamlit/secrets.toml
+
+secrets.toml
+keys.toml
+api_keys.py
+config_secrets.py
+
+
+# =========================
+# Streamlit
+# =========================
+
+# Keep config.toml if you use it
+# But ignore credentials or local login data
+.streamlit/credentials.toml
+
+
+# =========================
+# Local uploads and user files
+# =========================
+
+uploads/
+temp/
+tmp/
+local_data/
+user_data/
+session_files/
+
+# Ignore local PDFs by default
+*.pdf
+
+# But allow example/sample PDFs if needed
+!examples/*.pdf
+!sample_data/*.pdf
+!tests/fixtures/*.pdf
+
+
+# =========================
+# Generated outputs
+# =========================
+
+outputs/
+generated/
+extracted_text/
+extracted_images/
+quiz_exports/
+topic_exports/
+
+
+# =========================
+# Database
+# =========================
+
+*.sqlite
+*.sqlite3
+*.db
+
+
+# =========================
+# Logs
+# =========================
+
+*.log
+logs/
+
+
+# =========================
+# Testing
+# =========================
+
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+
+# =========================
+# IDE / editor
+# =========================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+
+# =========================
+# Operating system
+# =========================
+
+.DS_Store
+Thumbs.db
+desktop.ini
