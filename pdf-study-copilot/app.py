@@ -1,7 +1,7 @@
 # app.py
 
 import streamlit as st
-import fitz  # PyMuPDF
+import pymupdf as fitz  # FIXED: modern import (fitz API is deprecated)
 import urllib.parse
 
 
@@ -63,9 +63,6 @@ def init_state():
 
 
 def clear_answer_keys():
-    """
-    Remove old quiz answer widget states.
-    """
     for key in list(st.session_state.keys()):
         if key.startswith("answer_"):
             del st.session_state[key]
@@ -98,8 +95,7 @@ init_state()
 
 
 # ============================================================
-# MOCK FUNCTIONS
-# Used when AI is not configured yet
+# MOCK FUNCTIONS (used when AI is not configured)
 # ============================================================
 
 def mock_generate_topics(text):
@@ -109,7 +105,7 @@ def mock_generate_topics(text):
     return [
         {
             "topic": "Extracted PDF Content",
-            "summary": "This is a mock topic. Configure Grok/Groq to generate real AI topics.",
+            "summary": "This is a mock topic. Configure Groq to generate real AI topics.",
             "subtopics": [
                 {
                     "name": "Selected Page Content",
@@ -227,7 +223,7 @@ def generate_topics_action():
             st.warning("AI returned no topics. Check API key, model, or PDF text.")
     else:
         st.session_state["topics"] = mock_generate_topics(text)
-        st.info("Mock mode: configure Grok/Groq in .streamlit/secrets.toml for real AI.")
+        st.info("Mock mode: configure Groq in .streamlit secrets for real AI.")
 
 
 def generate_links_action():
@@ -248,7 +244,7 @@ def generate_links_action():
             st.warning("AI returned no study links. Check API key, model, or PDF text.")
     else:
         st.session_state["youtube_links"] = mock_generate_youtube_links(text, topics)
-        st.info("Mock mode: configure Grok/Groq in .streamlit/secrets.toml for real AI.")
+        st.info("Mock mode: configure Groq in .streamlit secrets for real AI.")
 
 
 def generate_quiz_action(num_questions):
@@ -273,7 +269,7 @@ def generate_quiz_action(num_questions):
             st.warning("AI returned no quiz questions. Check API key, model, or PDF text.")
     else:
         st.session_state["quiz_questions"] = mock_generate_quiz(text, num_questions)
-        st.info("Mock mode: configure Grok/Groq in .streamlit/secrets.toml for real AI.")
+        st.info("Mock mode: configure Groq in .streamlit secrets for real AI.")
 
 
 # ============================================================
@@ -281,11 +277,6 @@ def generate_quiz_action(num_questions):
 # ============================================================
 
 def extract_selected_text(doc, page_numbers):
-    """
-    Extract text from selected PDF pages.
-    page_numbers should be zero-indexed.
-    Example: [0, 1, 2] means pages 1, 2, 3.
-    """
     text_parts = []
 
     for page_number in page_numbers:
@@ -301,9 +292,6 @@ def extract_selected_text(doc, page_numbers):
 
 
 def extract_images_from_pages(doc, page_numbers):
-    """
-    Extract embedded images from selected PDF pages.
-    """
     images = []
 
     for page_number in page_numbers:
@@ -317,7 +305,6 @@ def extract_images_from_pages(doc, page_numbers):
                 try:
                     pix = fitz.Pixmap(doc, xref)
 
-                    # Convert CMYK to RGB if needed
                     if pix.n - pix.alpha > 3:
                         pix = fitz.Pixmap(fitz.csRGB, pix)
 
@@ -343,7 +330,7 @@ def extract_images_from_pages(doc, page_numbers):
 
 with st.sidebar:
     st.header("PDF Study Copilot")
-    st.caption("Streamlit + PDF + Grok/Groq AI")
+    st.caption("Streamlit + PDF + Groq AI")
 
     st.divider()
 
@@ -379,7 +366,7 @@ with st.sidebar:
 
     st.divider()
 
-    if st.button("Reset App", use_container_width=True):
+    if st.button("Reset App", width="stretch"):
         st.session_state.clear()
         st.rerun()
 
@@ -414,7 +401,6 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is not None:
-    # Load only when a new file is uploaded
     if st.session_state["pdf_name"] != uploaded_file.name:
         try:
             pdf_bytes = uploaded_file.getvalue()
@@ -495,7 +481,6 @@ if st.session_state["pdf_bytes"] is not None:
                     selected_pages
                 )
 
-                # Reset AI outputs
                 st.session_state["topics"] = []
                 st.session_state["youtube_links"] = []
                 st.session_state["quiz_questions"] = []
@@ -509,7 +494,6 @@ if st.session_state["pdf_bytes"] is not None:
                 "Now use each dashboard tab to generate AI outputs."
             )
 
-        # Show extracted text preview
         if st.session_state["extracted_text"]:
             with st.expander("View extracted text preview", expanded=False):
                 st.text(st.session_state["extracted_text"][:2000])
@@ -541,7 +525,7 @@ if st.session_state["pdf_bytes"] is not None:
                 if st.button(
                     "Generate Topics",
                     type="primary",
-                    use_container_width=True
+                    width="stretch"
                 ):
                     generate_topics_action()
 
@@ -577,7 +561,7 @@ if st.session_state["pdf_bytes"] is not None:
                 if st.button(
                     "Generate Study Links",
                     type="primary",
-                    use_container_width=True
+                    width="stretch"
                 ):
                     generate_links_action()
 
@@ -605,7 +589,7 @@ if st.session_state["pdf_bytes"] is not None:
                 if st.session_state["selected_pages"]:
                     if st.button(
                         "Re-extract Images",
-                        use_container_width=True
+                        width="stretch"
                     ):
                         with st.spinner("Extracting images..."):
                             st.session_state["images"] = extract_images_from_pages(
@@ -630,7 +614,7 @@ if st.session_state["pdf_bytes"] is not None:
                             st.image(
                                 image["bytes"],
                                 caption=f"Page {image['page']}",
-                                use_container_width=True
+                                width="stretch"
                             )
 
             # --------------------------------------------------------
@@ -651,7 +635,7 @@ if st.session_state["pdf_bytes"] is not None:
                 if st.button(
                     "Generate Quiz",
                     type="primary",
-                    use_container_width=True
+                    width="stretch"
                 ):
                     generate_quiz_action(int(num_questions))
 
