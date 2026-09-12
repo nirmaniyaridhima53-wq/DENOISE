@@ -6,6 +6,25 @@ import urllib.parse
 
 
 # ============================================================
+# AI SERVICE IMPORT
+# ============================================================
+
+AI_IMPORT_ERROR = None
+
+try:
+    from services.ai_service import (
+        get_ai_status,
+        generate_topics as ai_generate_topics,
+        generate_youtube_links as ai_generate_youtube_links,
+        generate_quiz as ai_generate_quiz,
+    )
+    AI_SERVICE_AVAILABLE = True
+except Exception as e:
+    AI_SERVICE_AVAILABLE = False
+    AI_IMPORT_ERROR = str(e)
+
+
+# ============================================================
 # PAGE CONFIG
 # ============================================================
 
@@ -43,6 +62,15 @@ def init_state():
             st.session_state[key] = value
 
 
+def clear_answer_keys():
+    """
+    Remove old quiz answer widget states.
+    """
+    for key in list(st.session_state.keys()):
+        if key.startswith("answer_"):
+            del st.session_state[key]
+
+
 def reset_learning_outputs():
     defaults = get_defaults()
 
@@ -60,7 +88,8 @@ def reset_learning_outputs():
     for key in keys_to_reset:
         st.session_state[key] = defaults[key]
 
-    # Reset page range slider widget if it exists
+    clear_answer_keys()
+
     if "page_range" in st.session_state:
         del st.session_state["page_range"]
 
@@ -69,7 +98,186 @@ init_state()
 
 
 # ============================================================
-# HELPER FUNCTIONS
+# MOCK FUNCTIONS
+# Used when AI is not configured yet
+# ============================================================
+
+def mock_generate_topics(text):
+    if not text.strip():
+        return []
+
+    return [
+        {
+            "topic": "Extracted PDF Content",
+            "summary": "This is a mock topic. Configure Grok/Groq to generate real AI topics.",
+            "subtopics": [
+                {
+                    "name": "Selected Page Content",
+                    "summary": f"The selected pages contain approximately {len(text)} characters of extracted text.",
+                    "keywords": ["PDF", "text extraction", "study"],
+                },
+                {
+                    "name": "AI Topic Mapping",
+                    "summary": "Real AI topic mapping will appear after API keys are configured.",
+                    "keywords": ["AI", "topics", "subtopics"],
+                },
+            ],
+        }
+    ]
+
+
+def mock_generate_youtube_links(text, topics=None):
+    links = []
+
+    if topics:
+        for topic in topics:
+            topic_name = topic.get("topic", "Topic")
+            search_query = f"{topic_name} explained simply"
+
+            url = (
+                "https://www.youtube.com/results?search_query="
+                + urllib.parse.quote(search_query)
+            )
+
+            links.append(
+                {
+                    "topic": topic_name,
+                    "title": search_query,
+                    "url": url,
+                    "reason": "Mock study suggestion. Configure AI for better suggestions.",
+                }
+            )
+    else:
+        search_query = "selected PDF topic explained simply"
+
+        url = (
+            "https://www.youtube.com/results?search_query="
+            + urllib.parse.quote(search_query)
+        )
+
+        links.append(
+            {
+                "topic": "General Study Topic",
+                "title": search_query,
+                "url": url,
+                "reason": "Mock study suggestion. Configure AI for better suggestions.",
+            }
+        )
+
+    return links
+
+
+def mock_generate_quiz(text, num_questions=5):
+    if not text.strip():
+        return []
+
+    questions = []
+
+    for i in range(num_questions):
+        questions.append(
+            {
+                "question": f"Sample question {i + 1}: What is one key idea from the selected PDF pages?",
+                "options": [
+                    "First sample answer",
+                    "Second sample answer",
+                    "Third sample answer",
+                    "Fourth sample answer",
+                ],
+                "correct_index": 0,
+                "explanation": "This is a mock explanation. Configure AI to generate real quiz questions.",
+            }
+        )
+
+    return questions
+
+
+# ============================================================
+# AI STATUS HELPER
+# ============================================================
+
+def is_ai_ready():
+    if not AI_SERVICE_AVAILABLE:
+        return False
+
+    try:
+        status = get_ai_status()
+        return bool(status.get("configured", False))
+    except Exception:
+        return False
+
+
+# ============================================================
+# AI ACTION FUNCTIONS
+# ============================================================
+
+def generate_topics_action():
+    text = st.session_state.get("extracted_text", "")
+
+    if not text.strip():
+        st.warning("No extracted text found. Extract pages first.")
+        return
+
+    if is_ai_ready():
+        with st.spinner("Generating topics with AI..."):
+            topics = ai_generate_topics(text)
+
+        st.session_state["topics"] = topics
+
+        if not topics:
+            st.warning("AI returned no topics. Check API key, model, or PDF text.")
+    else:
+        st.session_state["topics"] = mock_generate_topics(text)
+        st.info("Mock mode: configure Grok/Groq in .streamlit/secrets.toml for real AI.")
+
+
+def generate_links_action():
+    text = st.session_state.get("extracted_text", "")
+    topics = st.session_state.get("topics", [])
+
+    if not text.strip() and not topics:
+        st.warning("Extract pages first before generating study links.")
+        return
+
+    if is_ai_ready():
+        with st.spinner("Generating study links with AI..."):
+            links = ai_generate_youtube_links(text, topics)
+
+        st.session_state["youtube_links"] = links
+
+        if not links:
+            st.warning("AI returned no study links. Check API key, model, or PDF text.")
+    else:
+        st.session_state["youtube_links"] = mock_generate_youtube_links(text, topics)
+        st.info("Mock mode: configure Grok/Groq in .streamlit/secrets.toml for real AI.")
+
+
+def generate_quiz_action(num_questions):
+    text = st.session_state.get("extracted_text", "")
+
+    if not text.strip():
+        st.warning("Extract pages first before generating a quiz.")
+        return
+
+    clear_answer_keys()
+
+    st.session_state["quiz_answers"] = []
+    st.session_state["quiz_submitted"] = False
+
+    if is_ai_ready():
+        with st.spinner("Generating quiz with AI..."):
+            questions = ai_generate_quiz(text, num_questions)
+
+        st.session_state["quiz_questions"] = questions
+
+        if not questions:
+            st.warning("AI returned no quiz questions. Check API key, model, or PDF text.")
+    else:
+        st.session_state["quiz_questions"] = mock_generate_quiz(text, num_questions)
+        st.info("Mock mode: configure Grok/Groq in .streamlit/secrets.toml for real AI.")
+
+
+# ============================================================
+# PDF HELPER FUNCTIONS
 # ============================================================
 
 def extract_selected_text(doc, page_numbers):
@@ -129,102 +337,38 @@ def extract_images_from_pages(doc, page_numbers):
     return images
 
 
-def generate_mock_topics(text):
-    """
-    Placeholder topic generator.
-    This will later be replaced by Grok/Groq AI topic mapping.
-    """
-    if not text.strip():
-        return []
-
-    return [
-        {
-            "topic": "Extracted PDF Content",
-            "summary": "This is a placeholder topic. AI topic mapping will replace this.",
-            "subtopics": [
-                {
-                    "name": "Selected Page Content",
-                    "summary": f"The selected pages contain approximately {len(text)} characters of extracted text.",
-                    "keywords": ["PDF", "text extraction", "study"],
-                },
-                {
-                    "name": "AI Topic Mapping",
-                    "summary": "The next version will send this text to Grok/Groq and return structured topics and subtopics.",
-                    "keywords": ["AI", "topics", "subtopics"],
-                },
-            ],
-        }
-    ]
-
-
-def generate_youtube_search_links(topics):
-    """
-    Placeholder YouTube study link generator.
-    This will later be improved by AI.
-    """
-    links = []
-
-    for topic in topics:
-        topic_name = topic.get("topic", "Topic")
-        search_query = f"{topic_name} explained simply"
-
-        url = (
-            "https://www.youtube.com/results?search_query="
-            + urllib.parse.quote(search_query)
-        )
-
-        links.append(
-            {
-                "topic": topic_name,
-                "title": search_query,
-                "url": url,
-                "reason": "Placeholder study suggestion. AI will improve this later.",
-            }
-        )
-
-    return links
-
-
-def generate_mock_quiz(text, num_questions):
-    """
-    Placeholder quiz generator.
-    This will later be replaced by Grok/Groq quiz generation.
-    """
-    if not text.strip():
-        return []
-
-    questions = []
-
-    for i in range(num_questions):
-        questions.append(
-            {
-                "question": f"Sample question {i + 1}: What is one key idea from the selected PDF pages?",
-                "options": [
-                    "First sample answer",
-                    "Second sample answer",
-                    "Third sample answer",
-                    "Fourth sample answer",
-                ],
-                "correct_index": 0,
-                "explanation": "This is a placeholder explanation. Real AI-generated explanations will appear later.",
-            }
-        )
-
-    return questions
-
-
 # ============================================================
 # SIDEBAR
 # ============================================================
 
 with st.sidebar:
     st.header("PDF Study Copilot")
-
-    st.caption("MVP Mode: Front-end shell with placeholder AI outputs.")
+    st.caption("Streamlit + PDF + Grok/Groq AI")
 
     st.divider()
 
-    st.subheader("Current Status")
+    st.subheader("AI Status")
+
+    if AI_SERVICE_AVAILABLE:
+        status = get_ai_status()
+
+        if status.get("configured"):
+            st.success(f"Provider: {status.get('provider')}")
+            st.success(f"Model: {status.get('model')}")
+        else:
+            st.warning("AI not configured. Using mock outputs.")
+
+            if status.get("error"):
+                st.caption(status["error"])
+    else:
+        st.warning("AI service not loaded. Using mock outputs.")
+
+        if AI_IMPORT_ERROR:
+            st.caption(AI_IMPORT_ERROR)
+
+    st.divider()
+
+    st.subheader("Current PDF")
 
     if st.session_state["pdf_name"]:
         st.write(f"**PDF:** {st.session_state['pdf_name']}")
@@ -292,7 +436,7 @@ if uploaded_file is not None:
 
 
 # ============================================================
-# PAGE SELECTION SECTION
+# PAGE SELECTION + PROCESSING
 # ============================================================
 
 if st.session_state["pdf_bytes"] is not None:
@@ -351,18 +495,19 @@ if st.session_state["pdf_bytes"] is not None:
                     selected_pages
                 )
 
-                # Placeholder AI outputs
-                st.session_state["topics"] = generate_mock_topics(extracted_text)
-                st.session_state["youtube_links"] = generate_youtube_search_links(
-                    st.session_state["topics"]
-                )
-
-                # Reset quiz state
+                # Reset AI outputs
+                st.session_state["topics"] = []
+                st.session_state["youtube_links"] = []
                 st.session_state["quiz_questions"] = []
                 st.session_state["quiz_answers"] = []
                 st.session_state["quiz_submitted"] = False
 
-            st.success("Selected pages processed successfully.")
+                clear_answer_keys()
+
+            st.success(
+                "Selected pages processed. "
+                "Now use each dashboard tab to generate AI outputs."
+            )
 
         # Show extracted text preview
         if st.session_state["extracted_text"]:
@@ -393,27 +538,34 @@ if st.session_state["pdf_bytes"] is not None:
             with tab1:
                 st.header("Topic Map")
 
+                if st.button(
+                    "Generate Topics",
+                    type="primary",
+                    use_container_width=True
+                ):
+                    generate_topics_action()
+
+                st.divider()
+
                 if not st.session_state["topics"]:
-                    st.info("No topics generated yet.")
+                    st.info("Click 'Generate Topics' to analyze the selected pages.")
                 else:
                     for topic in st.session_state["topics"]:
-                        with st.expander(topic["topic"], expanded=True):
-                            st.write(topic["summary"])
+                        topic_name = topic.get("topic", "Topic")
 
-                            for subtopic in topic["subtopics"]:
-                                st.markdown(f"#### {subtopic['name']}")
-                                st.write(subtopic["summary"])
+                        with st.expander(topic_name, expanded=True):
+                            st.write(topic.get("summary", ""))
 
-                                if subtopic.get("keywords"):
-                                    keywords = ", ".join(subtopic["keywords"])
-                                    st.caption(f"Keywords: {keywords}")
+                            for subtopic in topic.get("subtopics", []):
+                                st.markdown(f"#### {subtopic.get('name', '')}")
+                                st.write(subtopic.get("summary", ""))
+
+                                keywords = subtopic.get("keywords", [])
+
+                                if keywords:
+                                    st.caption("Keywords: " + ", ".join(keywords))
 
                                 st.divider()
-
-                    st.info(
-                        "Placeholder topics shown. "
-                        "The next file will connect this to Grok/Groq."
-                    )
 
             # --------------------------------------------------------
             # TAB 2: URL STUDY
@@ -422,22 +574,26 @@ if st.session_state["pdf_bytes"] is not None:
             with tab2:
                 st.header("URL Study")
 
+                if st.button(
+                    "Generate Study Links",
+                    type="primary",
+                    use_container_width=True
+                ):
+                    generate_links_action()
+
+                st.divider()
+
                 if not st.session_state["youtube_links"]:
-                    st.info("No study links generated yet.")
+                    st.info("Click 'Generate Study Links' to create YouTube suggestions.")
                 else:
                     for link in st.session_state["youtube_links"]:
-                        st.markdown(f"#### {link['topic']}")
-                        st.write(f"**Suggested search:** {link['title']}")
-                        st.write(f"**Reason:** {link['reason']}")
+                        st.markdown(f"#### {link.get('topic', 'Study Topic')}")
+                        st.write(f"**Suggested search:** {link.get('title', '')}")
+                        st.write(f"**Reason:** {link.get('reason', '')}")
                         st.markdown(
-                            f"[Open YouTube Search]({link['url']})"
+                            f"[Open YouTube Search]({link.get('url', '#')})"
                         )
                         st.divider()
-
-                    st.info(
-                        "Placeholder links shown. "
-                        "AI will generate better topic-based study suggestions later."
-                    )
 
             # --------------------------------------------------------
             # TAB 3: DIAGRAMS
@@ -445,6 +601,19 @@ if st.session_state["pdf_bytes"] is not None:
 
             with tab3:
                 st.header("Diagrams")
+
+                if st.session_state["selected_pages"]:
+                    if st.button(
+                        "Re-extract Images",
+                        use_container_width=True
+                    ):
+                        with st.spinner("Extracting images..."):
+                            st.session_state["images"] = extract_images_from_pages(
+                                doc,
+                                st.session_state["selected_pages"]
+                            )
+
+                    st.divider()
 
                 if not st.session_state["images"]:
                     st.info(
@@ -479,24 +648,23 @@ if st.session_state["pdf_bytes"] is not None:
                     step=1
                 )
 
-                if st.button("Generate Quiz", type="primary"):
-                    st.session_state["quiz_questions"] = generate_mock_quiz(
-                        st.session_state["extracted_text"],
-                        int(num_questions)
-                    )
-                    st.session_state["quiz_answers"] = []
-                    st.session_state["quiz_submitted"] = False
+                if st.button(
+                    "Generate Quiz",
+                    type="primary",
+                    use_container_width=True
+                ):
+                    generate_quiz_action(int(num_questions))
+
+                st.divider()
 
                 if st.session_state["quiz_questions"]:
-                    st.divider()
-
                     for index, question in enumerate(st.session_state["quiz_questions"]):
                         st.markdown(f"### Question {index + 1}")
-                        st.write(question["question"])
+                        st.write(question.get("question", ""))
 
                         st.radio(
                             "Choose one answer",
-                            options=question["options"],
+                            options=question.get("options", []),
                             key=f"answer_{index}"
                         )
 
@@ -522,12 +690,18 @@ if st.session_state["pdf_bytes"] is not None:
                         for index, question in enumerate(
                             st.session_state["quiz_questions"]
                         ):
-                            user_answer = st.session_state["quiz_answers"][index]
-                            correct_answer = question["options"][
-                                question["correct_index"]
-                            ]
+                            if index >= len(st.session_state["quiz_answers"]):
+                                continue
 
-                            if user_answer == correct_answer:
+                            user_answer = st.session_state["quiz_answers"][index]
+                            options = question.get("options", [])
+                            correct_index = question.get("correct_index", 0)
+
+                            if (
+                                isinstance(correct_index, int)
+                                and 0 <= correct_index < len(options)
+                                and user_answer == options[correct_index]
+                            ):
                                 score += 1
 
                         total = len(st.session_state["quiz_questions"])
@@ -541,10 +715,20 @@ if st.session_state["pdf_bytes"] is not None:
                         for index, question in enumerate(
                             st.session_state["quiz_questions"]
                         ):
+                            if index >= len(st.session_state["quiz_answers"]):
+                                continue
+
                             user_answer = st.session_state["quiz_answers"][index]
-                            correct_answer = question["options"][
-                                question["correct_index"]
-                            ]
+                            options = question.get("options", [])
+                            correct_index = question.get("correct_index", 0)
+
+                            if (
+                                isinstance(correct_index, int)
+                                and 0 <= correct_index < len(options)
+                            ):
+                                correct_answer = options[correct_index]
+                            else:
+                                correct_answer = "Unknown"
 
                             if user_answer == correct_answer:
                                 st.markdown(f"✅ Question {index + 1}: Correct")
@@ -552,13 +736,12 @@ if st.session_state["pdf_bytes"] is not None:
                                 st.markdown(f"❌ Question {index + 1}: Incorrect")
 
                             st.write(f"**Correct answer:** {correct_answer}")
-                            st.write(f"**Explanation:** {question['explanation']}")
+                            st.write(f"**Explanation:** {question.get('explanation', '')}")
                             st.divider()
 
                 else:
                     st.info(
-                        "Click 'Generate Quiz' after extracting pages. "
-                        "This is currently using placeholder quiz questions."
+                        "Click 'Generate Quiz' after extracting pages."
                     )
 
 else:
