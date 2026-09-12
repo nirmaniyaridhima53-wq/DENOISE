@@ -1,0 +1,15 @@
+# Core web app framework
+streamlit
+
+# PDF parsing and image extraction
+PyMuPDF
+
+# AI API client
+# Used for Grok/xAI or Groq-compatible chat APIs
+openai
+
+# HTTP requests
+requests
+
+# Environment variable support
+python-dotenv
