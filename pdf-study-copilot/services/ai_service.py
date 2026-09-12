@@ -11,20 +11,15 @@ from openai import OpenAI
 
 
 # ============================================================
-# PROVIDER CONFIGURATION
+# GROQ-ONLY CONFIGURATION (xAI removed)
 # ============================================================
 
-SUPPORTED_PROVIDERS = {"xai", "groq"}
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
-PROVIDER_BASE_URLS = {
-    "xai": "https://api.x.ai/v1",
-    "groq": "https://api.groq.com/openai/v1",
-}
-
-DEFAULT_MODELS = {
-    "xai": "grok-beta",
-    "groq": "llama-3.3-70b-versatile",
-}
+# FIXED: replaced dead model llama-3.3-70b-versatile
+# Verify current IDs at console.groq.com -> Models
+DEFAULT_GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
+DEFAULT_GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 MAX_CONTEXT_CHARS = 18000
 
@@ -40,10 +35,6 @@ SYSTEM_JSON_ONLY = (
 # ============================================================
 
 def _secret(key: str, default: Any = None) -> Any:
-    """
-    Get secret from Streamlit secrets first.
-    Fall back to environment variables if needed.
-    """
     try:
         value = st.secrets[key]
         if value is not None and str(value).strip() != "":
@@ -56,55 +47,46 @@ def _secret(key: str, default: Any = None) -> Any:
 
 def get_ai_config() -> Dict[str, str]:
     """
-    Read AI provider configuration from secrets.
+    Read Groq configuration from Streamlit secrets.
 
     Expected secrets:
-        AI_PROVIDER = "xai" or "groq"
-        XAI_API_KEY = "..."
-        XAI_MODEL = "..."
-        GROQ_API_KEY = "..."
-        GROQ_MODEL = "..."
+        GROQ_API_KEY      (required)
+        GROQ_MODEL        (optional, overrides default text model)
+        GROQ_VISION_MODEL (optional, reserved for future vision features)
     """
-    provider = str(_secret("AI_PROVIDER", "xai")).lower().strip()
-
-    if provider not in SUPPORTED_PROVIDERS:
-        provider = "xai"
-
-    if provider == "xai":
-        api_key = _secret("XAI_API_KEY")
-        model = str(_secret("XAI_MODEL", DEFAULT_MODELS["xai"])).strip()
-    else:
-        api_key = _secret("GROQ_API_KEY")
-        model = str(_secret("GROQ_MODEL", DEFAULT_MODELS["groq"])).strip()
+    api_key = _secret("GROQ_API_KEY")
 
     if not api_key or str(api_key).strip() == "":
         raise RuntimeError(
-            "Missing AI API key. "
-            "Add XAI_API_KEY or GROQ_API_KEY to .streamlit/secrets.toml."
+            "Missing GROQ_API_KEY. "
+            "Add it in Streamlit Cloud Secrets (or .streamlit/secrets.toml locally)."
         )
 
     api_key = str(api_key).strip()
 
     if "YOUR_" in api_key.upper():
         raise RuntimeError(
-            "Please replace the placeholder API key in .streamlit/secrets.toml."
+            "Please replace the placeholder GROQ_API_KEY with your real key."
         )
 
+    model = str(_secret("GROQ_MODEL", DEFAULT_GROQ_MODEL)).strip()
     if not model:
-        model = DEFAULT_MODELS[provider]
+        model = DEFAULT_GROQ_MODEL
+
+    vision_model = str(_secret("GROQ_VISION_MODEL", DEFAULT_GROQ_VISION_MODEL)).strip()
+    if not vision_model:
+        vision_model = model
 
     return {
-        "provider": provider,
+        "provider": "groq",
         "api_key": api_key,
         "model": model,
-        "base_url": PROVIDER_BASE_URLS[provider],
+        "vision_model": vision_model,
+        "base_url": GROQ_BASE_URL,
     }
 
 
 def get_ai_status() -> Dict[str, Any]:
-    """
-    Safe status checker for UI display.
-    """
     try:
         config = get_ai_config()
         return {
@@ -123,9 +105,6 @@ def get_ai_status() -> Dict[str, Any]:
 
 
 def _get_client():
-    """
-    Create OpenAI-compatible client for xAI Grok or Groq.
-    """
     config = get_ai_config()
 
     client = OpenAI(
@@ -141,9 +120,6 @@ def _get_client():
 # ============================================================
 
 def _strip_code_fences(text: str) -> str:
-    """
-    Remove markdown code fences if the model accidentally adds them.
-    """
     text = (text or "").strip()
 
     if text.startswith("```"):
@@ -154,13 +130,6 @@ def _strip_code_fences(text: str) -> str:
 
 
 def _clean_json_response(text: str) -> Dict[str, Any]:
-    """
-    Convert AI response into JSON.
-    Handles:
-        - raw JSON
-        - JSON inside code fences
-        - JSON embedded in extra text
-    """
     text = _strip_code_fences(text)
 
     if not text:
@@ -193,9 +162,6 @@ def chat_json(
     temperature: float = 0.2,
     max_tokens: int = 3500,
 ) -> Dict[str, Any]:
-    """
-    Send a chat request and return JSON.
-    """
     try:
         client, config = _get_client()
 
@@ -219,7 +185,7 @@ def chat_json(
         return _clean_json_response(content)
 
     except Exception as e:
-        st.error(f"AI request failed: {e}")
+        st.error(f"AI request failed: Error code: {e}")
         return {}
 
 
@@ -228,9 +194,6 @@ def chat_json(
 # ============================================================
 
 def _truncate_text(text: str, max_chars: int = MAX_CONTEXT_CHARS) -> str:
-    """
-    Prevent extremely large PDF text from exceeding AI context limits.
-    """
     text = (text or "").strip()
 
     if len(text) <= max_chars:
@@ -244,9 +207,6 @@ def _truncate_text(text: str, max_chars: int = MAX_CONTEXT_CHARS) -> str:
 # ============================================================
 
 def _normalize_topics(raw_topics: List[Any]) -> List[Dict[str, Any]]:
-    """
-    Clean and validate topic JSON from AI.
-    """
     clean_topics = []
 
     for topic in raw_topics:
@@ -306,9 +266,6 @@ def _normalize_topics(raw_topics: List[Any]) -> List[Dict[str, Any]]:
 
 
 def _youtube_search_url(query: str) -> str:
-    """
-    Convert a search query into a YouTube search URL.
-    """
     query = query.strip()
     return (
         "https://www.youtube.com/results?search_query="
@@ -317,9 +274,6 @@ def _youtube_search_url(query: str) -> str:
 
 
 def _normalize_youtube_links(raw_links: List[Any]) -> List[Dict[str, Any]]:
-    """
-    Clean and validate YouTube suggestion JSON from AI.
-    """
     clean_links = []
 
     for item in raw_links:
@@ -351,9 +305,6 @@ def _normalize_youtube_links(raw_links: List[Any]) -> List[Dict[str, Any]]:
 
 
 def _normalize_quiz_questions(raw_questions: List[Any]) -> List[Dict[str, Any]]:
-    """
-    Clean and validate quiz JSON from AI.
-    """
     clean_questions = []
 
     for question in raw_questions:
@@ -380,7 +331,6 @@ def _normalize_quiz_questions(raw_questions: List[Any]) -> List[Dict[str, Any]]:
         if len(options) < 2:
             continue
 
-        # Keep maximum 4 options for clean MCQ UI
         options = options[:4]
 
         try:
@@ -408,9 +358,6 @@ def _normalize_quiz_questions(raw_questions: List[Any]) -> List[Dict[str, Any]]:
 # ============================================================
 
 def generate_topics(extracted_text: str) -> List[Dict[str, Any]]:
-    """
-    Generate structured topics and subtopics from selected PDF text.
-    """
     text = _truncate_text(extracted_text)
 
     if not text:
@@ -473,13 +420,6 @@ def generate_youtube_links(
     extracted_text: str,
     topics: List[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Generate YouTube search suggestions for topics and subtopics.
-
-    Important:
-    We do not ask the AI to invent direct YouTube video URLs.
-    We ask for search queries, then convert them into safe YouTube search links.
-    """
     text = _truncate_text(extracted_text, max_chars=12000)
 
     topic_context = ""
@@ -564,9 +504,6 @@ def generate_quiz(
     extracted_text: str,
     num_questions: int = 5,
 ) -> List[Dict[str, Any]]:
-    """
-    Generate multiple-choice quiz questions from selected PDF text.
-    """
     text = _truncate_text(extracted_text)
 
     if not text:
@@ -577,7 +514,6 @@ def generate_quiz(
     except Exception:
         num_questions = 5
 
-    # Keep quiz generation within safe bounds
     num_questions = max(3, min(20, num_questions))
 
     user_prompt = f"""
