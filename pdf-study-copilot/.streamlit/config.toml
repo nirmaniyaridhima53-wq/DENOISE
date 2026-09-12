@@ -1,0 +1,45 @@
+# ============================================================
+# STREAMLIT CONFIGURATION
+# ============================================================
+
+[theme]
+# Dark theme for a modern study dashboard look
+base = "dark"
+
+# Main accent color used for buttons and highlights
+primaryColor = "#4DA3FF"
+
+# Main app background
+backgroundColor = "#0E1117"
+
+# Sidebar / card background
+secondaryBackgroundColor = "#1A1F2B"
+
+# Main text color
+textColor = "#FAFAFA"
+
+# Font style
+font = "sans serif"
+
+
+[server]
+# Maximum upload size in MB
+# Useful for larger PDF files
+maxUploadSize = 50
+
+# Run headless, useful for deployment
+headless = true
+
+# Security protection
+enableXsrfProtection = true
+
+# Automatically reload app when files change during development
+runOnSave = true
+
+# Local server port
+port = 8501
+
+
+[browser]
+# Disable Streamlit usage statistics
+gatherUsageStats = false
