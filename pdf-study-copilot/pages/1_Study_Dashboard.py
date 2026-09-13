@@ -15,8 +15,12 @@ import urllib.parse
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
+'''if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))''' 
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+
+import ui_theme  # shared theme helpers (logo watermark)
 
 
 # ============================================================
@@ -46,11 +50,19 @@ LOGO_PATH = ROOT_DIR / "assets" / "logo.png"
 HAS_LOGO = LOGO_PATH.exists()
 
 
+'''st.set_page_config(
+    page_title="Study Dashboard — PDF Study Copilot",
+    page_icon=str(LOGO_PATH) if HAS_LOGO else "📚",
+    layout="wide",'''
+
 st.set_page_config(
     page_title="Study Dashboard — PDF Study Copilot",
     page_icon=str(LOGO_PATH) if HAS_LOGO else "📚",
     layout="wide",
 )
+
+# Faded logo behind all dashboard content
+ui_theme.inject_logo_watermark(opacity=0.06, size="60vmin")
 
 
 # ============================================================
