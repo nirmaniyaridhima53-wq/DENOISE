@@ -22,7 +22,7 @@ import ui_theme  # shared theme helpers (logo watermark)
 
 
 # ============================================================
-# AI SERVICE IMPORT
+# AI SERVICE IMPORT (text AI + vision AI)
 # ============================================================
 
 AI_IMPORT_ERROR = None
@@ -34,6 +34,8 @@ try:
         generate_youtube_links as ai_generate_youtube_links,
         generate_quiz as ai_generate_quiz,
     )
+    from services.vision_service import explain_image as ai_explain_image
+
     AI_SERVICE_AVAILABLE = True
 except Exception as e:
     AI_SERVICE_AVAILABLE = False
@@ -72,6 +74,7 @@ def get_defaults():
         "topics": [],
         "youtube_links": [],
         "images": [],
+        "image_explanations": {},
         "quiz_questions": [],
         "quiz_answers": [],
         "quiz_submitted": False,
@@ -100,6 +103,7 @@ def reset_learning_outputs():
         "topics",
         "youtube_links",
         "images",
+        "image_explanations",
         "quiz_questions",
         "quiz_answers",
         "quiz_submitted",
@@ -380,6 +384,19 @@ def extract_images_from_pages(doc, page_numbers):
     return images
 
 
+def render_diagram_explanation(result, page_number):
+    """
+    Small linear text block shown BELOW a diagram after the user clicks.
+    Contains: explanation (1-2 sentences) + quote/paraphrase + source ref.
+    """
+    st.caption(f"📖 {result['explanation']}")
+
+    if result.get("quote"):
+        st.caption(f"“{result['quote']}”")
+
+    st.caption(f"Source: {result['figure_label']}, Page {page_number}")
+
+
 # ============================================================
 # SIDEBAR
 # ============================================================
@@ -441,7 +458,7 @@ st.write(
     Upload a PDF, select pages, and generate:
     - Topic map
     - YouTube study links
-    - Diagrams/images
+    - Diagrams with AI visual explanations
     - Interactive quiz
     """
 )
@@ -528,7 +545,7 @@ if st.session_state["pdf_bytes"] is not None:
         )
 
         # ----------------------------------------------------
-        # Control 2: Manual typing (NEW)
+        # Control 2: Manual typing
         # ----------------------------------------------------
         manual_col1, manual_col2 = st.columns(2)
 
@@ -554,7 +571,6 @@ if st.session_state["pdf_bytes"] is not None:
 
         # ----------------------------------------------------
         # Final synchronized range
-        # (manual boxes always mirror the latest user choice)
         # ----------------------------------------------------
         start_page = min(
             int(st.session_state.manual_start),
@@ -596,6 +612,7 @@ if st.session_state["pdf_bytes"] is not None:
 
                 st.session_state["topics"] = []
                 st.session_state["youtube_links"] = []
+                st.session_state["image_explanations"] = {}
                 st.session_state["quiz_questions"] = []
                 st.session_state["quiz_answers"] = []
                 st.session_state["quiz_submitted"] = False
@@ -693,7 +710,7 @@ if st.session_state["pdf_bytes"] is not None:
                         st.divider()
 
             # --------------------------------------------------------
-            # TAB 3: DIAGRAMS
+            # TAB 3: DIAGRAMS + VISION EXPLANATIONS (NEW)
             # --------------------------------------------------------
 
             with tab3:
@@ -709,6 +726,8 @@ if st.session_state["pdf_bytes"] is not None:
                                 doc,
                                 st.session_state["selected_pages"]
                             )
+                            # Old explanations no longer match new images
+                            st.session_state["image_explanations"] = {}
 
                     st.divider()
 
@@ -718,17 +737,57 @@ if st.session_state["pdf_bytes"] is not None:
                         "Some PDFs store figures as vector graphics or scanned content."
                     )
                 else:
-                    st.write(f"Found {len(st.session_state['images'])} image(s).")
-
-                    columns = st.columns(3)
+                    st.write(
+                        f"Found {len(st.session_state['images'])} image(s). "
+                        "Each diagram is shown first — click "
+                        "'Click to reveal explanation' to see what it means."
+                    )
 
                     for index, image in enumerate(st.session_state["images"]):
-                        with columns[index % 3]:
-                            st.image(
-                                image["bytes"],
-                                caption=f"Page {image['page']}",
-                                width="stretch"
-                            )
+                        page_number = image["page"]
+                        cache_key = f"page{page_number}_img{index}"
+
+                        cached = st.session_state["image_explanations"].get(cache_key)
+
+                        # STEP 1: show the diagram FIRST
+                        st.image(image["bytes"], width=420)
+
+                        # Source label (small text below image)
+                        if cached:
+                            label = cached["figure_label"]
+                        else:
+                            label = f"Image {index + 1}"
+
+                        st.caption(f"*{label} from Page {page_number}*")
+
+                        # STEP 2: explanation hidden until user clicks
+                        if cached:
+                            render_diagram_explanation(cached, page_number)
+                        else:
+                            if st.button(
+                                "🔍 Click to reveal explanation",
+                                key=f"explain_btn_{index}"
+                            ):
+                                with st.spinner("Analyzing diagram visually..."):
+                                    page_text = doc.load_page(page_number - 1).get_text()
+
+                                    result = ai_explain_image(
+                                        image["bytes"],
+                                        page_text,
+                                        page_number,
+                                        index + 1,
+                                    )
+
+                                if result.get("error"):
+                                    st.warning(
+                                        "Could not explain this diagram: "
+                                        + result["error"]
+                                    )
+                                else:
+                                    st.session_state["image_explanations"][cache_key] = result
+                                    render_diagram_explanation(result, page_number)
+
+                        st.divider()
 
             # --------------------------------------------------------
             # TAB 4: QUIZ
