@@ -110,11 +110,44 @@ def reset_learning_outputs():
 
     clear_answer_keys()
 
+    # Reset slider widget
     if "page_range" in st.session_state:
         del st.session_state["page_range"]
 
+    # Reset manual typing widgets
+    for widget_key in ["manual_start", "manual_end", "range_source"]:
+        if widget_key in st.session_state:
+            del st.session_state[widget_key]
+
 
 init_state()
+
+
+# ============================================================
+# PAGE RANGE SYNC HELPERS (slider + manual typing stay in sync)
+# ============================================================
+
+def _on_slider_change():
+    """When the user moves the slider, update the typed boxes."""
+    slider_start, slider_end = st.session_state.page_range
+    st.session_state.manual_start = int(slider_start)
+    st.session_state.manual_end = int(slider_end)
+    st.session_state.range_source = "slider"
+
+
+def _on_manual_change():
+    """When the user types page numbers, update the slider."""
+    manual_start = int(st.session_state.manual_start)
+    manual_end = int(st.session_state.manual_end)
+
+    # Auto-swap if user types end before start
+    if manual_end < manual_start:
+        manual_start, manual_end = manual_end, manual_start
+        st.session_state.manual_start = manual_start
+        st.session_state.manual_end = manual_end
+
+    st.session_state.page_range = (manual_start, manual_end)
+    st.session_state.range_source = "manual"
 
 
 # ============================================================
@@ -470,12 +503,66 @@ if st.session_state["pdf_bytes"] is not None:
     else:
         default_end = min(10, total_pages)
 
-        start_page, end_page = st.slider(
-            "Select page range",
+        # One-time initialization of the manual typing boxes
+        if "manual_start" not in st.session_state:
+            st.session_state.manual_start = 1
+        if "manual_end" not in st.session_state:
+            st.session_state.manual_end = default_end
+
+        # Instruction for the user
+        st.info(
+            "📖 Please select 2 pages: a START page and an END page. "
+            "Type the page numbers below, or use the slider."
+        )
+
+        # ----------------------------------------------------
+        # Control 1: Slider (same as before)
+        # ----------------------------------------------------
+        st.slider(
+            "Select page range (slider)",
             min_value=1,
             max_value=total_pages,
             value=(1, default_end),
-            key="page_range"
+            key="page_range",
+            on_change=_on_slider_change
+        )
+
+        # ----------------------------------------------------
+        # Control 2: Manual typing (NEW)
+        # ----------------------------------------------------
+        manual_col1, manual_col2 = st.columns(2)
+
+        with manual_col1:
+            st.number_input(
+                "Start page (type here)",
+                min_value=1,
+                max_value=total_pages,
+                step=1,
+                key="manual_start",
+                on_change=_on_manual_change
+            )
+
+        with manual_col2:
+            st.number_input(
+                "End page (type here)",
+                min_value=1,
+                max_value=total_pages,
+                step=1,
+                key="manual_end",
+                on_change=_on_manual_change
+            )
+
+        # ----------------------------------------------------
+        # Final synchronized range
+        # (manual boxes always mirror the latest user choice)
+        # ----------------------------------------------------
+        start_page = min(
+            int(st.session_state.manual_start),
+            int(st.session_state.manual_end)
+        )
+        end_page = max(
+            int(st.session_state.manual_start),
+            int(st.session_state.manual_end)
         )
 
         selected_pages = list(range(start_page - 1, end_page))
