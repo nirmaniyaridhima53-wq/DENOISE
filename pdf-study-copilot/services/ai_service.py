@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import time
 import urllib.parse
 from typing import Any, Dict, List
 
@@ -11,23 +12,45 @@ from openai import OpenAI
 
 
 # ============================================================
-# GROQ-ONLY CONFIGURATION (xAI removed)
+# GROQ-ONLY CONFIGURATION
 # ============================================================
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
-# FIXED: replaced dead model llama-3.3-70b-versatile
-# Verify current IDs at console.groq.com -> Models
-DEFAULT_GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
-DEFAULT_GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+# Text model used for topics, links, quiz, and context explanations
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 
 MAX_CONTEXT_CHARS = 18000
+
+# Retry settings for temporary capacity / rate-limit errors
+MAX_RETRIES = 3
+BACKOFF_SECONDS = [2, 4, 8]
 
 SYSTEM_JSON_ONLY = (
     "You are a precise educational assistant. "
     "Return only valid JSON. "
     "Do not include markdown, code fences, comments, or explanations."
 )
+
+
+# ============================================================
+# RETRY HELPER
+# ============================================================
+
+def _is_retryable_error(error: Exception) -> bool:
+    status = getattr(error, "status_code", None)
+
+    if status in (429, 500, 502, 503, 504):
+        return True
+
+    message = str(error).lower()
+
+    return (
+        "over capacity" in message
+        or "rate limit" in message
+        or "try again" in message
+        or "back off" in message
+    )
 
 
 # ============================================================
@@ -50,9 +73,13 @@ def get_ai_config() -> Dict[str, str]:
     Read Groq configuration from Streamlit secrets.
 
     Expected secrets:
-        GROQ_API_KEY      (required)
-        GROQ_MODEL        (optional, overrides default text model)
-        GROQ_VISION_MODEL (optional, reserved for future vision features)
+        GROQ_API_KEY      (required)          -> auth
+        GROQ_MODEL        (optional)          -> TEXT model (topics/quiz/links/context)
+        GROQ_VISION_MODEL (optional)          -> VISION model (image analysis)
+                                                 leave unset if Groq has none
+
+    Returns text model and vision model SEPARATELY.
+    vision_model is an empty string when no vision model is configured.
     """
     api_key = _secret("GROQ_API_KEY")
 
@@ -69,13 +96,14 @@ def get_ai_config() -> Dict[str, str]:
             "Please replace the placeholder GROQ_API_KEY with your real key."
         )
 
+    # TEXT model
     model = str(_secret("GROQ_MODEL", DEFAULT_GROQ_MODEL)).strip()
     if not model:
         model = DEFAULT_GROQ_MODEL
 
-    vision_model = str(_secret("GROQ_VISION_MODEL", DEFAULT_GROQ_VISION_MODEL)).strip()
-    if not vision_model:
-        vision_model = model
+    # VISION model — NO silent fallback to the text model.
+    # Empty string = "no vision model available" (vision step will be skipped).
+    vision_model = str(_secret("GROQ_VISION_MODEL", "")).strip()
 
     return {
         "provider": "groq",
@@ -153,7 +181,7 @@ def _clean_json_response(text: str) -> Dict[str, Any]:
 
 
 # ============================================================
-# CORE AI CALL
+# CORE AI CALL (with automatic retry + exponential backoff)
 # ============================================================
 
 def chat_json(
@@ -162,31 +190,42 @@ def chat_json(
     temperature: float = 0.2,
     max_tokens: int = 3500,
 ) -> Dict[str, Any]:
-    try:
-        client, config = _get_client()
+    last_error = None
 
-        response = client.chat.completions.create(
-            model=config["model"],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt,
-                },
-            ],
-        )
+    for attempt in range(MAX_RETRIES):
+        try:
+            client, config = _get_client()
 
-        content = response.choices[0].message.content or ""
-        return _clean_json_response(content)
+            response = client.chat.completions.create(
+                model=config["model"],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": system_prompt,
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt,
+                    },
+                ],
+            )
 
-    except Exception as e:
-        st.error(f"AI request failed: Error code: {e}")
-        return {}
+            content = response.choices[0].message.content or ""
+            return _clean_json_response(content)
+
+        except Exception as e:
+            last_error = e
+
+            if _is_retryable_error(e) and attempt < MAX_RETRIES - 1:
+                time.sleep(BACKOFF_SECONDS[attempt])
+                continue
+
+            break
+
+    st.error(f"AI request failed after retries: {last_error}")
+    return {}
 
 
 # ============================================================
