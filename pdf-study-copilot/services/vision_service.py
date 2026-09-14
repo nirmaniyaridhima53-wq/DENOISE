@@ -180,7 +180,7 @@ Return only valid JSON with this exact structure:
 
 
 # ============================================================
-# MODE 2: CONTEXT-BASED EXPLANATION (FIX 1 — real errors surfaced)
+# MODE 2: CONTEXT-BASED EXPLANATION (real errors surfaced)
 # ============================================================
 
 def _explain_from_context(
@@ -216,7 +216,7 @@ Return only valid JSON:
             system_prompt=SYSTEM_JSON_ONLY,
             user_prompt=user_prompt,
             temperature=0.2,
-            max_tokens=600,
+            max_tokens=2000,
         )
 
         if not data:
@@ -255,7 +255,7 @@ Return only valid JSON:
 
 
 # ============================================================
-# MAIN ENTRY (FIX 2 — preserve BOTH vision and fallback errors)
+# MAIN ENTRY (preserve BOTH vision and fallback errors)
 # ============================================================
 
 def explain_image(
