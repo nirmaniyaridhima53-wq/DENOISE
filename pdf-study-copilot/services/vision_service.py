@@ -1,38 +1,74 @@
 # services/vision_service.py
-# Direct visual analysis of diagrams/images using a Groq vision model.
-# NO OCR / text-extraction middle step: the raw image bytes are sent
-# straight to the vision model as base64 visual input.
+# Diagram explanation engine with automatic fallback:
+#   MODE 1 (TRUE VISION): image bytes -> vision-capable model (if available)
+#   MODE 2 (CONTEXT):     explain from page text / figure captions (always works)
+# Includes retry with exponential backoff for 429/503 capacity errors.
 
 import base64
+import time
 from typing import Any, Dict
 
 from openai import OpenAI
 
-from services.ai_service import get_ai_config, _clean_json_response
+from services.ai_service import (
+    get_ai_config,
+    _clean_json_response,
+    chat_json,
+    SYSTEM_JSON_ONLY,
+)
+
+
+# ============================================================
+# RETRY SETTINGS (for "over capacity" / rate-limit errors)
+# ============================================================
+
+MAX_RETRIES = 2
+BACKOFF_SECONDS = [2, 4]
+
+
+def _is_retryable_error(error: Exception) -> bool:
+    status = getattr(error, "status_code", None)
+
+    if status in (429, 500, 502, 503, 504):
+        return True
+
+    message = str(error).lower()
+
+    return (
+        "over capacity" in message
+        or "rate limit" in message
+        or "try again" in message
+        or "back off" in message
+    )
 
 
 def _image_data_uri(image_bytes: bytes) -> str:
-    """Convert raw PNG bytes into a base64 data URI for the vision model."""
     return "data:image/png;base64," + base64.b64encode(image_bytes).decode("utf-8")
 
 
-def explain_image(
+def _normalize_result(data: Dict[str, Any], image_index: int) -> Dict[str, Any]:
+    figure_label = str(data.get("figure_label", "")).strip() or f"Image {image_index}"
+    explanation = str(data.get("explanation", "")).strip()
+    quote = str(data.get("quote", "")).strip()
+
+    return {
+        "figure_label": figure_label,
+        "explanation": explanation,
+        "quote": quote,
+        "error": None,
+    }
+
+
+# ============================================================
+# MODE 1: TRUE VISION (image bytes -> vision model)
+# ============================================================
+
+def _try_vision(
     image_bytes: bytes,
     page_text: str,
     page_number: int,
     image_index: int,
 ) -> Dict[str, Any]:
-    """
-    Visually analyze one diagram and return a short explanation.
-
-    Returns:
-        {
-          "figure_label": str,   # e.g. "Figure 2.1" or "Image 3"
-          "explanation": str,    # MAX 1-2 sentences (context-based summary)
-          "quote": str,          # quote/paraphrase from page text (may be "")
-          "error": None or str
-        }
-    """
     try:
         config = get_ai_config()
     except Exception as e:
@@ -43,7 +79,6 @@ def explain_image(
             "error": str(e),
         }
 
-    # Vision model falls back to text model if GROQ_VISION_MODEL is not set
     model = config.get("vision_model") or config["model"]
 
     client = OpenAI(api_key=config["api_key"], base_url=config["base_url"])
@@ -80,47 +115,133 @@ Return only valid JSON with this exact structure:
 }}
 """
 
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            temperature=0.2,
-            max_tokens=800,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_text},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": _image_data_uri(image_bytes)},
-                        },
-                    ],
-                },
-            ],
-        )
+    last_error = None
 
-        content = response.choices[0].message.content or ""
-        data = _clean_json_response(content)
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                temperature=0.2,
+                max_tokens=800,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": user_text},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": _image_data_uri(image_bytes)},
+                            },
+                        ],
+                    },
+                ],
+            )
 
-        figure_label = str(data.get("figure_label", "")).strip() or f"Image {image_index}"
-        explanation = str(data.get("explanation", "")).strip()
-        quote = str(data.get("quote", "")).strip()
+            content = response.choices[0].message.content or ""
+            data = _clean_json_response(content)
+            result = _normalize_result(data, image_index)
 
-        if not explanation:
-            explanation = "The model could not produce an explanation for this diagram."
+            # Vision worked and produced an explanation
+            if result["explanation"]:
+                return result
 
-        return {
-            "figure_label": figure_label,
-            "explanation": explanation,
-            "quote": quote,
-            "error": None,
-        }
+            # Model answered but with empty explanation -> stop, fall back
+            last_error = Exception("Vision model returned an empty explanation.")
+            break
 
-    except Exception as e:
+        except Exception as e:
+            last_error = e
+
+            if _is_retryable_error(e) and attempt < MAX_RETRIES - 1:
+                time.sleep(BACKOFF_SECONDS[attempt])
+                continue
+
+            break
+
+    return {
+        "figure_label": f"Image {image_index}",
+        "explanation": "",
+        "quote": "",
+        "error": str(last_error),
+    }
+
+
+# ============================================================
+# MODE 2: CONTEXT-BASED EXPLANATION (page text + figure captions)
+# ============================================================
+
+def _explain_from_context(
+    page_text: str,
+    page_number: int,
+    image_index: int,
+) -> Dict[str, Any]:
+    user_prompt = f"""
+You are explaining a diagram/image extracted from page {page_number} of a document.
+You CANNOT see the image itself. Use ONLY the page text below.
+
+---PAGE TEXT START---
+{(page_text or '')[:4000]}
+---PAGE TEXT END---
+
+Tasks:
+1. Search the text for a figure caption (lines starting with "Figure", "Fig.", "Plate", "Diagram", "Scheme", "Table"). If found, use it as the primary source.
+2. Write an explanation of MAXIMUM 1-2 short sentences describing what this diagram most likely shows, based on the caption and surrounding context.
+3. Include a short quote or paraphrase from the page text that relates to the diagram.
+4. figure_label = the caption number if found (for example "Figure 2.1"), otherwise "Image {image_index}".
+
+Return only valid JSON with this exact structure:
+
+{{
+  "figure_label": "Figure X.X or Image {image_index}",
+  "explanation": "1-2 sentence explanation",
+  "quote": "short quote or paraphrase from the page text, or empty string if none"
+}}
+"""
+
+    data = chat_json(
+        system_prompt=SYSTEM_JSON_ONLY,
+        user_prompt=user_prompt,
+        temperature=0.2,
+        max_tokens=600,
+    )
+
+    if not data:
         return {
             "figure_label": f"Image {image_index}",
             "explanation": "",
             "quote": "",
-            "error": str(e),
+            "error": "Text model request failed (see error message above).",
         }
+
+    result = _normalize_result(data, image_index)
+
+    if not result["explanation"]:
+        result["explanation"] = (
+            "No figure caption or related context found on this page."
+        )
+
+    # Honest labeling: this explanation comes from text context, not pixels
+    result["explanation"] = "[Context-based] " + result["explanation"]
+
+    return result
+
+
+# ============================================================
+# MAIN ENTRY: vision first, context fallback
+# ============================================================
+
+def explain_image(
+    image_bytes: bytes,
+    page_text: str,
+    page_number: int,
+    image_index: int,
+) -> Dict[str, Any]:
+    # MODE 1: try true visual analysis
+    vision_result = _try_vision(image_bytes, page_text, page_number, image_index)
+
+    if not vision_result.get("error") and vision_result.get("explanation"):
+        return vision_result
+
+    # MODE 2: fall back to context-based explanation
+    return _explain_from_context(page_text, page_number, image_index)
