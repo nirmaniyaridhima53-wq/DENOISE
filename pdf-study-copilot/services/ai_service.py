@@ -73,10 +73,10 @@ def get_ai_config() -> Dict[str, str]:
     Read Groq configuration from Streamlit secrets.
 
     Expected secrets:
-        GROQ_API_KEY      (required)          -> auth
-        GROQ_MODEL        (optional)          -> TEXT model (topics/quiz/links/context)
-        GROQ_VISION_MODEL (optional)          -> VISION model (image analysis)
-                                                 leave unset if Groq has none
+        GROQ_API_KEY      (required) -> auth
+        GROQ_MODEL        (optional) -> TEXT model (topics/quiz/links/context)
+        GROQ_VISION_MODEL (optional) -> VISION model (image analysis)
+                                        leave unset if Groq has none
 
     Returns text model and vision model SEPARATELY.
     vision_model is an empty string when no vision model is configured.
@@ -181,7 +181,8 @@ def _clean_json_response(text: str) -> Dict[str, Any]:
 
 
 # ============================================================
-# CORE AI CALL (with automatic retry + exponential backoff)
+# CORE AI CALL
+# (retry with backoff + empty-reply token-budget boost + JSON repair)
 # ============================================================
 
 def chat_json(
@@ -191,6 +192,7 @@ def chat_json(
     max_tokens: int = 3500,
 ) -> Dict[str, Any]:
     last_error = None
+    token_budget = max_tokens
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -199,7 +201,7 @@ def chat_json(
             response = client.chat.completions.create(
                 model=config["model"],
                 temperature=temperature,
-                max_tokens=max_tokens,
+                max_tokens=token_budget,
                 messages=[
                     {
                         "role": "system",
@@ -213,7 +215,50 @@ def chat_json(
             )
 
             content = response.choices[0].message.content or ""
-            return _clean_json_response(content)
+            parsed = _clean_json_response(content)
+
+            # SUCCESS: valid JSON received
+            if parsed:
+                return parsed
+
+            # EMPTY reply: reasoning models (like gpt-oss) can burn the whole
+            # token budget on internal thinking -> retry with 3x budget
+            if not content.strip():
+                last_error = Exception(
+                    "Model returned an empty reply (token budget too small?)."
+                )
+                token_budget = token_budget * 3
+                continue
+
+            # PROSE reply (not JSON): one repair attempt forcing JSON output
+            repair_response = client.chat.completions.create(
+                model=config["model"],
+                temperature=0.0,
+                max_tokens=token_budget,
+                messages=[
+                    {"role": "system", "content": SYSTEM_JSON_ONLY},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your previous reply was not valid JSON. "
+                            "Convert it into valid JSON now. "
+                            "Return ONLY the JSON object, nothing else.\n\n"
+                            "Previous reply:\n" + content[:4000]
+                        ),
+                    },
+                ],
+            )
+
+            repair_content = repair_response.choices[0].message.content or ""
+            repaired = _clean_json_response(repair_content)
+
+            if repaired:
+                return repaired
+
+            last_error = Exception(
+                f"Model returned no usable JSON. First reply was: {content[:300]!r}"
+            )
+            break
 
         except Exception as e:
             last_error = e
