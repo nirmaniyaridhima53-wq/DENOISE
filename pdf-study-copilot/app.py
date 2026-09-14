@@ -2,7 +2,7 @@
 # PAGE 1: "Get Started" landing page
 
 import streamlit as st
-from pathlib import Path
+from pathlib import Path 
 
 # Logo lives at: pdf-study-copilot/assets/logo.png
 LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo.png"
