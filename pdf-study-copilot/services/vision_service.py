@@ -1,8 +1,8 @@
 # services/vision_service.py
 # Diagram explanation engine with automatic fallback:
-#   MODE 1 (TRUE VISION): image bytes -> vision-capable model (if available)
+#   MODE 1 (TRUE VISION): runs ONLY if GROQ_VISION_MODEL is configured
 #   MODE 2 (CONTEXT):     explain from page text / figure captions (always works)
-# Includes retry with exponential backoff for 429/503 capacity errors.
+# Errors from BOTH modes are preserved and shown to the user.
 
 import base64
 import time
@@ -60,7 +60,7 @@ def _normalize_result(data: Dict[str, Any], image_index: int) -> Dict[str, Any]:
 
 
 # ============================================================
-# MODE 1: TRUE VISION (image bytes -> vision model)
+# MODE 1: TRUE VISION (only when GROQ_VISION_MODEL is set)
 # ============================================================
 
 def _try_vision(
@@ -79,7 +79,21 @@ def _try_vision(
             "error": str(e),
         }
 
-    model = config.get("vision_model") or config["model"]
+    vision_model = str(config.get("vision_model", "")).strip()
+
+    # No vision model configured -> skip the call entirely (do NOT
+    # send image_url to a text-only model).
+    if not vision_model:
+        return {
+            "figure_label": f"Image {image_index}",
+            "explanation": "",
+            "quote": "",
+            "error": (
+                "No vision model configured. "
+                "Add GROQ_VISION_MODEL to Streamlit secrets to enable "
+                "true visual analysis."
+            ),
+        }
 
     client = OpenAI(api_key=config["api_key"], base_url=config["base_url"])
 
@@ -120,7 +134,7 @@ Return only valid JSON with this exact structure:
     for attempt in range(MAX_RETRIES):
         try:
             response = client.chat.completions.create(
-                model=model,
+                model=vision_model,
                 temperature=0.2,
                 max_tokens=800,
                 messages=[
@@ -142,11 +156,9 @@ Return only valid JSON with this exact structure:
             data = _clean_json_response(content)
             result = _normalize_result(data, image_index)
 
-            # Vision worked and produced an explanation
             if result["explanation"]:
                 return result
 
-            # Model answered but with empty explanation -> stop, fall back
             last_error = Exception("Vision model returned an empty explanation.")
             break
 
@@ -168,7 +180,7 @@ Return only valid JSON with this exact structure:
 
 
 # ============================================================
-# MODE 2: CONTEXT-BASED EXPLANATION (page text + figure captions)
+# MODE 2: CONTEXT-BASED EXPLANATION (FIX 1 — real errors surfaced)
 # ============================================================
 
 def _explain_from_context(
@@ -185,50 +197,65 @@ You CANNOT see the image itself. Use ONLY the page text below.
 ---PAGE TEXT END---
 
 Tasks:
-1. Search the text for a figure caption (lines starting with "Figure", "Fig.", "Plate", "Diagram", "Scheme", "Table"). If found, use it as the primary source.
-2. Write an explanation of MAXIMUM 1-2 short sentences describing what this diagram most likely shows, based on the caption and surrounding context.
-3. Include a short quote or paraphrase from the page text that relates to the diagram.
-4. figure_label = the caption number if found (for example "Figure 2.1"), otherwise "Image {image_index}".
+1. Search the text for a figure caption.
+2. Write an explanation of MAXIMUM 1-2 short sentences.
+3. Include a short quote or paraphrase from the page text.
+4. Use "Image {image_index}" if no figure label is found.
 
-Return only valid JSON with this exact structure:
+Return only valid JSON:
 
 {{
   "figure_label": "Figure X.X or Image {image_index}",
   "explanation": "1-2 sentence explanation",
-  "quote": "short quote or paraphrase from the page text, or empty string if none"
+  "quote": "short quote or paraphrase, or empty string"
 }}
 """
 
-    data = chat_json(
-        system_prompt=SYSTEM_JSON_ONLY,
-        user_prompt=user_prompt,
-        temperature=0.2,
-        max_tokens=600,
-    )
+    try:
+        data = chat_json(
+            system_prompt=SYSTEM_JSON_ONLY,
+            user_prompt=user_prompt,
+            temperature=0.2,
+            max_tokens=600,
+        )
 
-    if not data:
+        if not data:
+            return {
+                "figure_label": f"Image {image_index}",
+                "explanation": "",
+                "quote": "",
+                "error": (
+                    "Text model returned no JSON response. "
+                    "Check the terminal/Streamlit logs for the API error."
+                ),
+            }
+
+        result = _normalize_result(data, image_index)
+
+        if not result["explanation"]:
+            result["explanation"] = (
+                "No figure caption or related context found on this page."
+            )
+
+        result["explanation"] = (
+            "[Context-based] " + result["explanation"]
+        )
+
+        return result
+
+    except Exception as e:
         return {
             "figure_label": f"Image {image_index}",
             "explanation": "",
             "quote": "",
-            "error": "Text model request failed (see error message above).",
+            "error": (
+                f"Text fallback failed: {type(e).__name__}: {str(e)}"
+            ),
         }
-
-    result = _normalize_result(data, image_index)
-
-    if not result["explanation"]:
-        result["explanation"] = (
-            "No figure caption or related context found on this page."
-        )
-
-    # Honest labeling: this explanation comes from text context, not pixels
-    result["explanation"] = "[Context-based] " + result["explanation"]
-
-    return result
 
 
 # ============================================================
-# MAIN ENTRY: vision first, context fallback
+# MAIN ENTRY (FIX 2 — preserve BOTH vision and fallback errors)
 # ============================================================
 
 def explain_image(
@@ -237,11 +264,31 @@ def explain_image(
     page_number: int,
     image_index: int,
 ) -> Dict[str, Any]:
-    # MODE 1: try true visual analysis
-    vision_result = _try_vision(image_bytes, page_text, page_number, image_index)
+    vision_result = _try_vision(
+        image_bytes,
+        page_text,
+        page_number,
+        image_index,
+    )
 
-    if not vision_result.get("error") and vision_result.get("explanation"):
+    if (
+        not vision_result.get("error")
+        and vision_result.get("explanation")
+    ):
         return vision_result
 
-    # MODE 2: fall back to context-based explanation
-    return _explain_from_context(page_text, page_number, image_index)
+    vision_error = vision_result.get("error", "Unknown vision error")
+
+    context_result = _explain_from_context(
+        page_text,
+        page_number,
+        image_index,
+    )
+
+    if context_result.get("error"):
+        context_result["error"] = (
+            f"Vision failed: {vision_error} | "
+            f"Context fallback failed: {context_result['error']}"
+        )
+
+    return context_result
