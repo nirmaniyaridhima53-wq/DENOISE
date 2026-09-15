@@ -18,7 +18,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-import ui_theme  # shared theme helpers (logo watermark)
+import ui_theme  # shared theme helpers (design system + logo watermark)
 
 
 # ============================================================
@@ -56,8 +56,12 @@ st.set_page_config(
     layout="wide",
 )
 
-# Faded logo behind all dashboard content
-ui_theme.inject_logo_watermark(opacity=0.06, size="60vmin")
+# ============================================================
+# CHANGE 3: activate the Research OS design system
+# + faded logo behind all dashboard content
+# ============================================================
+ui_theme.inject_design_system()
+ui_theme.inject_logo_watermark(opacity=0.07, size="80vmin")
 
 
 # ============================================================
@@ -403,7 +407,7 @@ def render_diagram_explanation(result, page_number):
 
 with st.sidebar:
     if HAS_LOGO:
-        st.image(str(LOGO_PATH), width=160)
+        st.image(str(LOGO_PATH), width=240)
 
     if st.button("⬅ Back to Home", width="stretch"):
         st.switch_page("app.py")
@@ -710,7 +714,7 @@ if st.session_state["pdf_bytes"] is not None:
                         st.divider()
 
             # --------------------------------------------------------
-            # TAB 3: DIAGRAMS + VISION EXPLANATIONS (NEW)
+            # TAB 3: DIAGRAMS + VISION EXPLANATIONS
             # --------------------------------------------------------
 
             with tab3:
