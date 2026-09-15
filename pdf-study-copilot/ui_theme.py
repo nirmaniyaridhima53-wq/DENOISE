@@ -14,6 +14,7 @@ HAS_LOGO = LOGO_PATH.exists()
 
 # ============================================================
 # DESIGN SYSTEM CSS (tokens + fonts + components + motion)
+# This is the CSS you pasted — embedded as a Python string
 # ============================================================
 
 DESIGN_CSS = """
