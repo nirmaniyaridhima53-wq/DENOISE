@@ -61,7 +61,7 @@ col_left, col_right = st.columns([3, 2])
 # ---------------------------------------------------------
 with col_left:
     # Hero Section
-    ui_theme.hero_heading("Discover what biotech researchers haven't tested yet")
+     ui_theme.hero_heading("Discover what researchers haven't tested yet")
     ui_theme.hero_sub("Upload papers. Find gaps. Run experiments.")
     
     st.markdown("<br>", unsafe_allow_html=True)
