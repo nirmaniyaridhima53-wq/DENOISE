@@ -2,7 +2,9 @@
 # PAGE 1: "Get Started" landing page
 
 import streamlit as st
-from pathlib import Path 
+from pathlib import Path
+
+import ui_theme  # Research OS design system (tokens, fonts, motion)
 
 # Logo lives at: pdf-study-copilot/assets/logo.png
 LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo.png"
@@ -15,6 +17,13 @@ st.set_page_config(
 )
 
 # ============================================================
+# CHANGE 3: activate the Research OS design system
+# (tokens, fonts, gradients, motion, component styles)
+# ============================================================
+ui_theme.inject_design_system()
+
+
+# ============================================================
 # HERO SECTION (centered logo + enter button)
 # ============================================================
 
@@ -22,7 +31,7 @@ col_left, col_center, col_right = st.columns([1, 2, 1])
 
 with col_center:
     if HAS_LOGO:
-        st.image(str(LOGO_PATH), width=320)
+        st.image(str(LOGO_PATH), width=520)
 
     st.title("PDF Study Copilot")
     st.subheader("Turn any PDF into an interactive study session.")
@@ -32,6 +41,7 @@ with col_center:
 
     if st.button("🚀 Get Started", type="primary", width="stretch"):
         st.switch_page("pages/1_Study_Dashboard.py")
+
 
 # ============================================================
 # FEATURE PREVIEW
