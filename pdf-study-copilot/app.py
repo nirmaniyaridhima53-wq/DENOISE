@@ -1,67 +1,172 @@
 # app.py
-# PAGE 1: "Get Started" landing page
+# PAGE 1: Research OS Landing & Upload Command Center
 
 import streamlit as st
 from pathlib import Path
+import pymupdf as fitz  # Needed to validate PDF and count pages immediately
 
-import ui_theme  # Research OS design system (tokens, fonts, motion)
+import ui_theme  # Research OS design system
 
 # Logo lives at: pdf-study-copilot/assets/logo.png
 LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logo.png"
 HAS_LOGO = LOGO_PATH.exists()
 
 st.set_page_config(
-    page_title="PDF Study Copilot — Get Started",
-    page_icon=str(LOGO_PATH) if HAS_LOGO else "📚",
+    page_title="Research OS — Command Center",
+    page_icon=str(LOGO_PATH) if HAS_LOGO else "🧬",
     layout="wide",
 )
 
-# ============================================================
-# CHANGE 3: activate the Research OS design system
-# (tokens, fonts, gradients, motion, component styles)
-# ============================================================
+# Activate Design System
 ui_theme.inject_design_system()
 
 
 # ============================================================
-# HERO SECTION (centered logo + enter button)
+# HEADER: Navigation & Status
 # ============================================================
+h_col1, h_col2, h_col3 = st.columns([1, 6, 2])
 
-col_left, col_center, col_right = st.columns([1, 2, 1])
-
-with col_center:
+with h_col1:
     if HAS_LOGO:
-        st.image(str(LOGO_PATH), width=520)
+        # Logo with "breathing" animation class
+        st.markdown(
+            f'<div class="logo-breathe" style="width:60px;">'
+            f'<img src="data:image/png;base64,{ui_theme.base64.b64encode(open(LOGO_PATH, "rb").read()).decode()}" width="100%"/>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
-    st.title("PDF Study Copilot")
-    st.subheader("Turn any PDF into an interactive study session.")
-    st.caption("Topic maps • YouTube study links • Diagrams • AI quizzes")
+with h_col2:
+    st.markdown(
+        '<h3 style="margin:0; font-family:var(--font-heading); font-weight:700; letter-spacing:-0.5px;">'
+        'Research <span style="color:var(--accent-teal)">OS</span></h3>',
+        unsafe_allow_html=True
+    )
 
-    st.write("")
+with h_col3:
+    # Status Chip (Top Right)
+    ui_theme.status_chip("AI Engine Active")
 
-    if st.button("🚀 Get Started", type="primary", width="stretch"):
-        st.switch_page("pages/1_Study_Dashboard.py")
+
+st.markdown("<br>", unsafe_allow_html=True)
 
 
 # ============================================================
-# FEATURE PREVIEW
+# MAIN LAYOUT: 60% Features / 40% Upload Action
 # ============================================================
+col_left, col_right = st.columns([3, 2])
 
-st.divider()
+# ---------------------------------------------------------
+# LEFT COLUMN: Hero & Feature Matrix
+# ---------------------------------------------------------
+with col_left:
+    # Hero Section
+    ui_theme.hero_heading("Discover what biotech researchers haven't tested yet")
+    ui_theme.hero_sub("Upload papers. Find gaps. Run experiments.")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
 
-f1, f2, f3, f4 = st.columns(4)
+    # Interactive Feature Matrix (2x2 Grid)
+    # Note: We use index to stagger animation delays (0ms, 75ms, 150ms, 225ms)
+    
+    row1_col1, row1_col2 = st.columns(2)
+    with row1_col1:
+        ui_theme.feature_card(
+            icon="🧠", 
+            title="Topic Map", 
+            desc="Interactive knowledge graph extraction from dense literature.",
+            index=0
+        )
+    with row1_col2:
+        ui_theme.feature_card(
+            icon="🧬", 
+            title="Visual AI Engine", 
+            desc="Molecular diagram analysis & context-aware explanations.",
+            index=1
+        )
 
-f1.markdown("#### 🧠 Topic Map")
-f1.caption("AI extracts topics & subtopics from your selected pages.")
+    row2_col1, row2_col2 = st.columns(2)
+    with row2_col1:
+        ui_theme.feature_card(
+            icon="🔍", 
+            title="Hypothesis Gaps", 
+            desc="Identify missing links and untested variables in current research.",
+            index=2
+        )
+    with row2_col2:
+        ui_theme.feature_card(
+            icon="📝", 
+            title="Synthesis Quiz", 
+            desc="Auto-generated comprehension testing & active recall.",
+            index=3
+        )
 
-f2.markdown("#### 🎥 URL Study")
-f2.caption("Smart YouTube search suggestions for every topic.")
 
-f3.markdown("#### 🖼️ Diagrams")
-f3.caption("Automatic extraction of figures & images.")
+# ---------------------------------------------------------
+# RIGHT COLUMN: Upload & Parsing OS
+# ---------------------------------------------------------
+with col_right:
+    # Container to style the upload zone area
+    st.markdown(
+        """
+        <div style="background:var(--bg-surface-1); border:1px solid rgba(255,255,255,0.05); 
+                    border-radius:16px; padding:2rem; height:100%;">
+        """,
+        unsafe_allow_html=True
+    )
+    
+    st.markdown("#### 📂 Upload & Parsing OS")
+    st.caption("Securely process PDF documents up to 50MB.")
+    
+    # The Dropzone
+    uploaded_file = st.file_uploader(
+        "Drag & drop or click to browse",
+        type=["pdf"],
+        label_visibility="collapsed"
+    )
 
-f4.markdown("#### 📝 Quiz")
-f4.caption("Interactive AI-generated quizzes with scoring.")
+    # State Machine Logic
+    if uploaded_file is not None:
+        # STATE: Processing / Success
+        try:
+            pdf_bytes = uploaded_file.getvalue()
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            total_pages = len(doc)
+            
+            # Save to session state so Dashboard can access it
+            st.session_state["pdf_bytes"] = pdf_bytes
+            st.session_state["pdf_name"] = uploaded_file.name
+            st.session_state["total_pages"] = total_pages
+            
+            # Success Indicator
+            st.success(f"**{uploaded_file.name}** loaded successfully ({total_pages} pages).")
+            
+            # CTA
+            if st.button("Enter Workspace →", type="primary", width="stretch"):
+                # Reset specific dashboard states if needed, but keep PDF data
+                st.switch_page("pages/1_Study_Dashboard.py")
+                
+        except Exception as e:
+            st.error(f"Invalid file: {e}")
+            
+    else:
+        # STATE: Idle
+        st.info("Waiting for document input...")
+        st.markdown(
+            """
+            <div style="text-align:center; color:var(--text-muted); margin-top:2rem;">
+                <div style="font-size:3rem; opacity:0.3;">📄</div>
+                <p>No document loaded</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
-st.divider()
-st.caption("Powered by Streamlit + Groq AI")
+    st.markdown("</div>", unsafe_allow_html=True) # Close container
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+st.markdown("<br><br>", unsafe_allow_html=True)
+st.caption("Powered by Streamlit • Groq AI • Research OS Design System")
