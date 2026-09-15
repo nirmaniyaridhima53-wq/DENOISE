@@ -1,11 +1,12 @@
 # pages/1_Study_Dashboard.py
-# PAGE 2: Full PDF Study Dashboard
+# PAGE 2: Research OS Study Workspace (full design system applied)
 
 import sys
+import base64
 from pathlib import Path
 
 import streamlit as st
-import pymupdf as fitz  # modern PyMuPDF import
+import pymupdf as fitz  # modern PyMuPDF import (no deprecation warning)
 import urllib.parse
 
 
@@ -18,7 +19,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-import ui_theme  # shared theme helpers (design system + logo watermark)
+import ui_theme  # design system + watermark
 
 
 # ============================================================
@@ -51,17 +52,43 @@ HAS_LOGO = LOGO_PATH.exists()
 
 
 st.set_page_config(
-    page_title="Study Dashboard — PDF Study Copilot",
-    page_icon=str(LOGO_PATH) if HAS_LOGO else "📚",
+    page_title="Research OS — Study Workspace",
+    page_icon=str(LOGO_PATH) if HAS_LOGO else "🧬",
     layout="wide",
 )
 
-# ============================================================
-# CHANGE 3: activate the Research OS design system
-# + faded logo behind all dashboard content
-# ============================================================
+# Design system + faded logo behind workspace content
 ui_theme.inject_design_system()
-ui_theme.inject_logo_watermark(opacity=0.07, size="80vmin")
+ui_theme.inject_logo_watermark(opacity=0.08, size="85vmin")
+
+
+# ============================================================
+# SMALL LOCAL HELPERS (design chips)
+# ============================================================
+
+def _warn_chip(label: str):
+    """Warning-colored status chip (mock mode / errors)."""
+    st.markdown(
+        f'<span class="status-chip" '
+        f'style="border-color:rgba(249,115,22,0.45); color:var(--status-warning);">'
+        f'<span class="dot" style="background:var(--status-warning); '
+        f'box-shadow:0 0 8px var(--status-warning);"></span>'
+        f'{label}</span>',
+        unsafe_allow_html=True,
+    )
+
+
+def _logo_mark(size: int = 48):
+    """Small breathing logo mark for headers."""
+    if not HAS_LOGO:
+        return
+    logo_b64 = base64.b64encode(LOGO_PATH.read_bytes()).decode("utf-8")
+    st.markdown(
+        f'<div class="logo-breathe">'
+        f'<img src="data:image/png;base64,{logo_b64}" width="{size}" alt="logo"/>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ============================================================
@@ -118,11 +145,9 @@ def reset_learning_outputs():
 
     clear_answer_keys()
 
-    # Reset slider widget
     if "page_range" in st.session_state:
         del st.session_state["page_range"]
 
-    # Reset manual typing widgets
     for widget_key in ["manual_start", "manual_end", "range_source"]:
         if widget_key in st.session_state:
             del st.session_state[widget_key]
@@ -136,7 +161,6 @@ init_state()
 # ============================================================
 
 def _on_slider_change():
-    """When the user moves the slider, update the typed boxes."""
     slider_start, slider_end = st.session_state.page_range
     st.session_state.manual_start = int(slider_start)
     st.session_state.manual_end = int(slider_end)
@@ -144,11 +168,9 @@ def _on_slider_change():
 
 
 def _on_manual_change():
-    """When the user types page numbers, update the slider."""
     manual_start = int(st.session_state.manual_start)
     manual_end = int(st.session_state.manual_end)
 
-    # Auto-swap if user types end before start
     if manual_end < manual_start:
         manual_start, manual_end = manual_end, manual_start
         st.session_state.manual_start = manual_start
@@ -389,10 +411,7 @@ def extract_images_from_pages(doc, page_numbers):
 
 
 def render_diagram_explanation(result, page_number):
-    """
-    Small linear text block shown BELOW a diagram after the user clicks.
-    Contains: explanation (1-2 sentences) + quote/paraphrase + source ref.
-    """
+    """Small linear text block shown BELOW a diagram after the user clicks."""
     st.caption(f"📖 {result['explanation']}")
 
     if result.get("quote"):
@@ -402,47 +421,46 @@ def render_diagram_explanation(result, page_number):
 
 
 # ============================================================
-# SIDEBAR
+# SIDEBAR (styled workspace panel)
 # ============================================================
 
 with st.sidebar:
     if HAS_LOGO:
-        st.image(str(LOGO_PATH), width=240)
+        st.image(str(LOGO_PATH), width=200)
 
     if st.button("⬅ Back to Home", width="stretch"):
         st.switch_page("app.py")
 
     st.divider()
 
-    st.subheader("AI Status")
+    st.caption("AI STATUS")
 
     if AI_SERVICE_AVAILABLE:
         status = get_ai_status()
 
         if status.get("configured"):
-            st.success(f"Provider: {status.get('provider')}")
-            st.success(f"Model: {status.get('model')}")
+            ui_theme.status_chip("AI Engine Active")
+            st.caption(f"Model: `{status.get('model')}`")
         else:
-            st.warning("AI not configured. Using mock outputs.")
-
-            if status.get("error"):
-                st.caption(status["error"])
+            _warn_chip("Mock Mode")
+            st.caption(status.get("error") or "Configure Groq secrets for real AI.")
     else:
-        st.warning("AI service not loaded. Using mock outputs.")
-
+        _warn_chip("AI Offline")
         if AI_IMPORT_ERROR:
             st.caption(AI_IMPORT_ERROR)
 
     st.divider()
 
-    st.subheader("Current PDF")
+    st.caption("CURRENT PDF")
 
     if st.session_state["pdf_name"]:
-        st.write(f"**PDF:** {st.session_state['pdf_name']}")
-        st.write(f"**Total pages:** {st.session_state['total_pages']}")
-        st.write(f"**Selected pages:** {len(st.session_state['selected_pages'])}")
+        st.write(f"**{st.session_state['pdf_name']}**")
+        st.caption(
+            f"{st.session_state['total_pages']} pages • "
+            f"{len(st.session_state['selected_pages'])} selected"
+        )
     else:
-        st.info("No PDF loaded yet.")
+        st.caption("No document loaded.")
 
     st.divider()
 
@@ -452,457 +470,432 @@ with st.sidebar:
 
 
 # ============================================================
-# PAGE HEADER
+# WORKSPACE HEADER
 # ============================================================
 
-st.title("📚 Study Dashboard")
+h_col1, h_col2, h_col3 = st.columns([1, 6, 2])
 
-st.write(
-    """
-    Upload a PDF, select pages, and generate:
-    - Topic map
-    - YouTube study links
-    - Diagrams with AI visual explanations
-    - Interactive quiz
-    """
-)
+with h_col1:
+    _logo_mark(48)
 
+with h_col2:
+    st.markdown(
+        '<h3 style="margin:0; font-family:var(--font-heading); font-weight:700;">'
+        'Study <span style="color:var(--accent-teal)">Workspace</span></h3>',
+        unsafe_allow_html=True,
+    )
 
-# ============================================================
-# UPLOAD SECTION
-# ============================================================
-
-st.subheader("Step 1: Upload PDF")
-
-uploaded_file = st.file_uploader(
-    "Choose a PDF file",
-    type=["pdf"],
-    help="Select a PDF file from your device."
-)
-
-if uploaded_file is not None:
-    if st.session_state["pdf_name"] != uploaded_file.name:
-        try:
-            pdf_bytes = uploaded_file.getvalue()
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
-            st.session_state["pdf_bytes"] = pdf_bytes
-            st.session_state["pdf_name"] = uploaded_file.name
-            st.session_state["total_pages"] = len(doc)
-
-            reset_learning_outputs()
-
-            st.success(
-                f"Loaded '{uploaded_file.name}' successfully. "
-                f"Total pages: {len(doc)}."
-            )
-
-        except Exception as e:
-            st.error(f"Unable to read PDF. Error: {e}")
-
-
-# ============================================================
-# PAGE SELECTION + PROCESSING
-# ============================================================
-
-if st.session_state["pdf_bytes"] is not None:
-
-    try:
-        doc = fitz.open(stream=st.session_state["pdf_bytes"], filetype="pdf")
-    except Exception as e:
-        st.error(f"Unable to open stored PDF. Error: {e}")
-        st.stop()
-
-    total_pages = st.session_state["total_pages"] or len(doc)
-
-    st.divider()
-
-    st.subheader("Step 2: Select Pages")
-
-    if total_pages == 0:
-        st.warning("This PDF appears to have no pages.")
+with h_col3:
+    if is_ai_ready():
+        ui_theme.status_chip("Analysis Ready")
     else:
-        default_end = min(10, total_pages)
+        _warn_chip("Mock Mode")
 
-        # One-time initialization of the manual typing boxes
-        if "manual_start" not in st.session_state:
-            st.session_state.manual_start = 1
-        if "manual_end" not in st.session_state:
-            st.session_state.manual_end = default_end
+st.markdown("<br>", unsafe_allow_html=True)
 
-        # Instruction for the user
-        st.info(
-            "📖 Please select 2 pages: a START page and an END page. "
-            "Type the page numbers below, or use the slider."
-        )
 
-        # ----------------------------------------------------
-        # Control 1: Slider (same as before)
-        # ----------------------------------------------------
-        st.slider(
-            "Select page range (slider)",
-            min_value=1,
-            max_value=total_pages,
-            value=(1, default_end),
-            key="page_range",
-            on_change=_on_slider_change
-        )
+# ============================================================
+# PARSING OS PANEL (upload + page selection + extract)
+# ============================================================
 
-        # ----------------------------------------------------
-        # Control 2: Manual typing
-        # ----------------------------------------------------
-        manual_col1, manual_col2 = st.columns(2)
+with st.container(border=True):
+    st.markdown("#### 📂 Upload & Parsing OS")
 
-        with manual_col1:
-            st.number_input(
-                "Start page (type here)",
-                min_value=1,
-                max_value=total_pages,
-                step=1,
-                key="manual_start",
-                on_change=_on_manual_change
+    uploaded_file = st.file_uploader(
+        "Drag & drop or click to browse",
+        type=["pdf"],
+        label_visibility="collapsed",
+    )
+
+    if uploaded_file is not None:
+        if st.session_state["pdf_name"] != uploaded_file.name:
+            try:
+                pdf_bytes = uploaded_file.getvalue()
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+                st.session_state["pdf_bytes"] = pdf_bytes
+                st.session_state["pdf_name"] = uploaded_file.name
+                st.session_state["total_pages"] = len(doc)
+
+                reset_learning_outputs()
+
+                st.success(
+                    f"**{uploaded_file.name}** loaded successfully "
+                    f"({len(doc)} pages)."
+                )
+
+            except Exception as e:
+                st.error(f"Unable to read PDF. Error: {e}")
+
+    # --------------------------------------------------------
+    # PAGE SELECTION + EXTRACTION (inside same panel)
+    # --------------------------------------------------------
+
+    if st.session_state["pdf_bytes"] is not None:
+
+        try:
+            doc = fitz.open(stream=st.session_state["pdf_bytes"], filetype="pdf")
+        except Exception as e:
+            st.error(f"Unable to open stored PDF. Error: {e}")
+            st.stop()
+
+        total_pages = st.session_state["total_pages"] or len(doc)
+
+        if total_pages == 0:
+            st.warning("This PDF appears to have no pages.")
+        else:
+            st.divider()
+            st.markdown("#### 🎯 Page Selection")
+
+            default_end = min(10, total_pages)
+
+            if "manual_start" not in st.session_state:
+                st.session_state.manual_start = 1
+            if "manual_end" not in st.session_state:
+                st.session_state.manual_end = default_end
+
+            st.info(
+                "📖 Please select 2 pages: a START page and an END page. "
+                "Type the page numbers below, or use the slider."
             )
 
-        with manual_col2:
-            st.number_input(
-                "End page (type here)",
+            st.slider(
+                "Select page range (slider)",
                 min_value=1,
                 max_value=total_pages,
-                step=1,
-                key="manual_end",
-                on_change=_on_manual_change
+                value=(1, default_end),
+                key="page_range",
+                on_change=_on_slider_change
             )
 
-        # ----------------------------------------------------
-        # Final synchronized range
-        # ----------------------------------------------------
-        start_page = min(
-            int(st.session_state.manual_start),
-            int(st.session_state.manual_end)
-        )
-        end_page = max(
-            int(st.session_state.manual_start),
-            int(st.session_state.manual_end)
-        )
+            manual_col1, manual_col2 = st.columns(2)
 
-        selected_pages = list(range(start_page - 1, end_page))
+            with manual_col1:
+                st.number_input(
+                    "Start page (type here)",
+                    min_value=1,
+                    max_value=total_pages,
+                    step=1,
+                    key="manual_start",
+                    on_change=_on_manual_change
+                )
 
-        st.caption(
-            f"Selected range: page {start_page} to page {end_page}. "
-            f"Total selected pages: {len(selected_pages)}."
-        )
+            with manual_col2:
+                st.number_input(
+                    "End page (type here)",
+                    min_value=1,
+                    max_value=total_pages,
+                    step=1,
+                    key="manual_end",
+                    on_change=_on_manual_change
+                )
+
+            start_page = min(
+                int(st.session_state.manual_start),
+                int(st.session_state.manual_end)
+            )
+            end_page = max(
+                int(st.session_state.manual_start),
+                int(st.session_state.manual_end)
+            )
+
+            selected_pages = list(range(start_page - 1, end_page))
+
+            st.caption(
+                f"Selected range: page {start_page} to page {end_page}. "
+                f"Total selected pages: {len(selected_pages)}."
+            )
+
+            if st.button("⚡ Extract Selected Pages", type="primary", width="stretch"):
+                st.session_state["selected_pages"] = selected_pages
+
+                with st.spinner("Extracting text and images from selected pages..."):
+                    extracted_text = extract_selected_text(doc, selected_pages)
+
+                    if not extracted_text.strip():
+                        st.warning(
+                            "No extractable text found on the selected pages. "
+                            "This PDF may be scanned or image-based."
+                        )
+
+                    st.session_state["extracted_text"] = extracted_text
+                    st.session_state["images"] = extract_images_from_pages(
+                        doc,
+                        selected_pages
+                    )
+
+                    st.session_state["topics"] = []
+                    st.session_state["youtube_links"] = []
+                    st.session_state["image_explanations"] = {}
+                    st.session_state["quiz_questions"] = []
+                    st.session_state["quiz_answers"] = []
+                    st.session_state["quiz_submitted"] = False
+
+                    clear_answer_keys()
+
+                st.success(
+                    "Selected pages processed. "
+                    "Use the workspace tabs below to generate AI outputs."
+                )
+
+            if st.session_state["extracted_text"]:
+                with st.expander("View extracted text preview", expanded=False):
+                    st.text(st.session_state["extracted_text"][:2000])
+
+
+# ============================================================
+# STUDY WORKSPACE TABS
+# ============================================================
+
+if st.session_state["extracted_text"]:
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("#### 🧪 Analysis Modules")
+
+    tab1, tab2, tab3, tab4 = st.tabs(
+        [
+            "🧠 Topic Map",
+            "🎥 URL Study",
+            "🖼️ Diagrams",
+            "📝 Quiz",
+        ]
+    )
+
+    # --------------------------------------------------------
+    # TAB 1: TOPIC MAP
+    # --------------------------------------------------------
+
+    with tab1:
+        if st.button(
+            "Generate Topics",
+            type="primary",
+            width="stretch"
+        ):
+            generate_topics_action()
 
         st.divider()
 
-        st.subheader("Step 3: Extract Selected Pages")
+        if not st.session_state["topics"]:
+            st.info("Click 'Generate Topics' to analyze the selected pages.")
+        else:
+            for topic in st.session_state["topics"]:
+                topic_name = topic.get("topic", "Topic")
 
-        if st.button("Extract Selected Pages", type="primary"):
-            st.session_state["selected_pages"] = selected_pages
+                with st.expander(topic_name, expanded=True):
+                    st.write(topic.get("summary", ""))
 
-            with st.spinner("Extracting text and images from selected pages..."):
-                extracted_text = extract_selected_text(doc, selected_pages)
+                    for subtopic in topic.get("subtopics", []):
+                        st.markdown(f"#### {subtopic.get('name', '')}")
+                        st.write(subtopic.get("summary", ""))
 
-                if not extracted_text.strip():
-                    st.warning(
-                        "No extractable text found on the selected pages. "
-                        "This PDF may be scanned or image-based."
+                        keywords = subtopic.get("keywords", [])
+
+                        if keywords:
+                            st.caption("Keywords: " + ", ".join(keywords))
+
+                        st.divider()
+
+    # --------------------------------------------------------
+    # TAB 2: URL STUDY
+    # --------------------------------------------------------
+
+    with tab2:
+        if st.button(
+            "Generate Study Links",
+            type="primary",
+            width="stretch"
+        ):
+            generate_links_action()
+
+        st.divider()
+
+        if not st.session_state["youtube_links"]:
+            st.info("Click 'Generate Study Links' to create YouTube suggestions.")
+        else:
+            for link in st.session_state["youtube_links"]:
+                with st.container(border=True):
+                    st.markdown(f"##### {link.get('topic', 'Study Topic')}")
+                    st.caption(f"**Search:** {link.get('title', '')}")
+                    st.caption(f"**Why:** {link.get('reason', '')}")
+                    st.markdown(
+                        f"[Open YouTube Search →]({link.get('url', '#')})"
                     )
 
-                st.session_state["extracted_text"] = extracted_text
-                st.session_state["images"] = extract_images_from_pages(
-                    doc,
-                    selected_pages
-                )
+    # --------------------------------------------------------
+    # TAB 3: DIAGRAMS + VISION EXPLANATIONS
+    # --------------------------------------------------------
 
-                st.session_state["topics"] = []
-                st.session_state["youtube_links"] = []
-                st.session_state["image_explanations"] = {}
-                st.session_state["quiz_questions"] = []
-                st.session_state["quiz_answers"] = []
-                st.session_state["quiz_submitted"] = False
-
-                clear_answer_keys()
-
-            st.success(
-                "Selected pages processed. "
-                "Now use each dashboard tab to generate AI outputs."
-            )
-
-        if st.session_state["extracted_text"]:
-            with st.expander("View extracted text preview", expanded=False):
-                st.text(st.session_state["extracted_text"][:2000])
+    with tab3:
+        if st.session_state["selected_pages"]:
+            if st.button(
+                "Re-extract Images",
+                width="stretch"
+            ):
+                with st.spinner("Extracting images..."):
+                    st.session_state["images"] = extract_images_from_pages(
+                        doc,
+                        st.session_state["selected_pages"]
+                    )
+                    st.session_state["image_explanations"] = {}
 
             st.divider()
 
-            # ============================================================
-            # STUDY DASHBOARD TABS
-            # ============================================================
-
-            st.subheader("Step 4: Study Dashboard")
-
-            tab1, tab2, tab3, tab4 = st.tabs(
-                [
-                    "🧠 Topic Map",
-                    "🎥 URL Study",
-                    "🖼️ Diagrams",
-                    "📝 Quiz",
-                ]
+        if not st.session_state["images"]:
+            st.info(
+                "No images found on the selected pages. "
+                "Some PDFs store figures as vector graphics or scanned content."
+            )
+        else:
+            st.write(
+                f"Found {len(st.session_state['images'])} image(s). "
+                "Each diagram is shown first — click "
+                "'Click to reveal explanation' to see what it means."
             )
 
-            # --------------------------------------------------------
-            # TAB 1: TOPIC MAP
-            # --------------------------------------------------------
+            for index, image in enumerate(st.session_state["images"]):
+                page_number = image["page"]
+                cache_key = f"page{page_number}_img{index}"
 
-            with tab1:
-                st.header("Topic Map")
+                cached = st.session_state["image_explanations"].get(cache_key)
 
-                if st.button(
-                    "Generate Topics",
-                    type="primary",
-                    width="stretch"
-                ):
-                    generate_topics_action()
+                with st.container(border=True):
+                    st.image(image["bytes"], width=420)
 
-                st.divider()
+                    if cached:
+                        label = cached["figure_label"]
+                    else:
+                        label = f"Image {index + 1}"
 
-                if not st.session_state["topics"]:
-                    st.info("Click 'Generate Topics' to analyze the selected pages.")
-                else:
-                    for topic in st.session_state["topics"]:
-                        topic_name = topic.get("topic", "Topic")
+                    st.caption(f"*{label} from Page {page_number}*")
 
-                        with st.expander(topic_name, expanded=True):
-                            st.write(topic.get("summary", ""))
+                    if cached:
+                        render_diagram_explanation(cached, page_number)
+                    else:
+                        if st.button(
+                            "🔍 Click to reveal explanation",
+                            key=f"explain_btn_{index}"
+                        ):
+                            with st.spinner("Analyzing diagram visually..."):
+                                page_text = doc.load_page(page_number - 1).get_text()
 
-                            for subtopic in topic.get("subtopics", []):
-                                st.markdown(f"#### {subtopic.get('name', '')}")
-                                st.write(subtopic.get("summary", ""))
+                                result = ai_explain_image(
+                                    image["bytes"],
+                                    page_text,
+                                    page_number,
+                                    index + 1,
+                                )
 
-                                keywords = subtopic.get("keywords", [])
+                            if result.get("error"):
+                                st.warning(
+                                    "Could not explain this diagram: "
+                                    + result["error"]
+                                )
+                            else:
+                                st.session_state["image_explanations"][cache_key] = result
+                                render_diagram_explanation(result, page_number)
 
-                                if keywords:
-                                    st.caption("Keywords: " + ", ".join(keywords))
+    # --------------------------------------------------------
+    # TAB 4: QUIZ
+    # --------------------------------------------------------
 
-                                st.divider()
+    with tab4:
+        num_questions = st.number_input(
+            "Number of quiz questions",
+            min_value=3,
+            max_value=20,
+            value=5,
+            step=1
+        )
 
-            # --------------------------------------------------------
-            # TAB 2: URL STUDY
-            # --------------------------------------------------------
+        if st.button(
+            "Generate Quiz",
+            type="primary",
+            width="stretch"
+        ):
+            generate_quiz_action(int(num_questions))
 
-            with tab2:
-                st.header("URL Study")
+        st.divider()
 
-                if st.button(
-                    "Generate Study Links",
-                    type="primary",
-                    width="stretch"
-                ):
-                    generate_links_action()
+        if st.session_state["quiz_questions"]:
+            for index, question in enumerate(st.session_state["quiz_questions"]):
+                with st.container(border=True):
+                    st.markdown(f"##### Question {index + 1}")
+                    st.write(question.get("question", ""))
 
-                st.divider()
-
-                if not st.session_state["youtube_links"]:
-                    st.info("Click 'Generate Study Links' to create YouTube suggestions.")
-                else:
-                    for link in st.session_state["youtube_links"]:
-                        st.markdown(f"#### {link.get('topic', 'Study Topic')}")
-                        st.write(f"**Suggested search:** {link.get('title', '')}")
-                        st.write(f"**Reason:** {link.get('reason', '')}")
-                        st.markdown(
-                            f"[Open YouTube Search]({link.get('url', '#')})"
-                        )
-                        st.divider()
-
-            # --------------------------------------------------------
-            # TAB 3: DIAGRAMS + VISION EXPLANATIONS
-            # --------------------------------------------------------
-
-            with tab3:
-                st.header("Diagrams")
-
-                if st.session_state["selected_pages"]:
-                    if st.button(
-                        "Re-extract Images",
-                        width="stretch"
-                    ):
-                        with st.spinner("Extracting images..."):
-                            st.session_state["images"] = extract_images_from_pages(
-                                doc,
-                                st.session_state["selected_pages"]
-                            )
-                            # Old explanations no longer match new images
-                            st.session_state["image_explanations"] = {}
-
-                    st.divider()
-
-                if not st.session_state["images"]:
-                    st.info(
-                        "No images found on the selected pages. "
-                        "Some PDFs store figures as vector graphics or scanned content."
-                    )
-                else:
-                    st.write(
-                        f"Found {len(st.session_state['images'])} image(s). "
-                        "Each diagram is shown first — click "
-                        "'Click to reveal explanation' to see what it means."
+                    st.radio(
+                        "Choose one answer",
+                        options=question.get("options", []),
+                        key=f"answer_{index}"
                     )
 
-                    for index, image in enumerate(st.session_state["images"]):
-                        page_number = image["page"]
-                        cache_key = f"page{page_number}_img{index}"
+            if st.button("Submit Quiz", type="primary", width="stretch"):
+                answers = []
 
-                        cached = st.session_state["image_explanations"].get(cache_key)
+                for index in range(len(st.session_state["quiz_questions"])):
+                    answers.append(
+                        st.session_state.get(f"answer_{index}")
+                    )
 
-                        # STEP 1: show the diagram FIRST
-                        st.image(image["bytes"], width=420)
+                st.session_state["quiz_answers"] = answers
+                st.session_state["quiz_submitted"] = True
 
-                        # Source label (small text below image)
-                        if cached:
-                            label = cached["figure_label"]
-                        else:
-                            label = f"Image {index + 1}"
+            if (
+                st.session_state["quiz_submitted"]
+                and st.session_state["quiz_answers"]
+            ):
+                score = 0
 
-                        st.caption(f"*{label} from Page {page_number}*")
-
-                        # STEP 2: explanation hidden until user clicks
-                        if cached:
-                            render_diagram_explanation(cached, page_number)
-                        else:
-                            if st.button(
-                                "🔍 Click to reveal explanation",
-                                key=f"explain_btn_{index}"
-                            ):
-                                with st.spinner("Analyzing diagram visually..."):
-                                    page_text = doc.load_page(page_number - 1).get_text()
-
-                                    result = ai_explain_image(
-                                        image["bytes"],
-                                        page_text,
-                                        page_number,
-                                        index + 1,
-                                    )
-
-                                if result.get("error"):
-                                    st.warning(
-                                        "Could not explain this diagram: "
-                                        + result["error"]
-                                    )
-                                else:
-                                    st.session_state["image_explanations"][cache_key] = result
-                                    render_diagram_explanation(result, page_number)
-
-                        st.divider()
-
-            # --------------------------------------------------------
-            # TAB 4: QUIZ
-            # --------------------------------------------------------
-
-            with tab4:
-                st.header("Quiz")
-
-                num_questions = st.number_input(
-                    "Number of quiz questions",
-                    min_value=3,
-                    max_value=20,
-                    value=5,
-                    step=1
-                )
-
-                if st.button(
-                    "Generate Quiz",
-                    type="primary",
-                    width="stretch"
+                for index, question in enumerate(
+                    st.session_state["quiz_questions"]
                 ):
-                    generate_quiz_action(int(num_questions))
+                    if index >= len(st.session_state["quiz_answers"]):
+                        continue
 
-                st.divider()
-
-                if st.session_state["quiz_questions"]:
-                    for index, question in enumerate(st.session_state["quiz_questions"]):
-                        st.markdown(f"### Question {index + 1}")
-                        st.write(question.get("question", ""))
-
-                        st.radio(
-                            "Choose one answer",
-                            options=question.get("options", []),
-                            key=f"answer_{index}"
-                        )
-
-                        st.divider()
-
-                    if st.button("Submit Quiz", type="primary"):
-                        answers = []
-
-                        for index in range(len(st.session_state["quiz_questions"])):
-                            answers.append(
-                                st.session_state.get(f"answer_{index}")
-                            )
-
-                        st.session_state["quiz_answers"] = answers
-                        st.session_state["quiz_submitted"] = True
+                    user_answer = st.session_state["quiz_answers"][index]
+                    options = question.get("options", [])
+                    correct_index = question.get("correct_index", 0)
 
                     if (
-                        st.session_state["quiz_submitted"]
-                        and st.session_state["quiz_answers"]
+                        isinstance(correct_index, int)
+                        and 0 <= correct_index < len(options)
+                        and user_answer == options[correct_index]
                     ):
-                        score = 0
+                        score += 1
 
-                        for index, question in enumerate(
-                            st.session_state["quiz_questions"]
-                        ):
-                            if index >= len(st.session_state["quiz_answers"]):
-                                continue
+                total = len(st.session_state["quiz_questions"])
 
-                            user_answer = st.session_state["quiz_answers"][index]
-                            options = question.get("options", [])
-                            correct_index = question.get("correct_index", 0)
+                st.success(f"Your score: {score}/{total}")
 
-                            if (
-                                isinstance(correct_index, int)
-                                and 0 <= correct_index < len(options)
-                                and user_answer == options[correct_index]
-                            ):
-                                score += 1
+                st.divider()
 
-                        total = len(st.session_state["quiz_questions"])
+                st.subheader("Explanations")
 
-                        st.success(f"Your score: {score}/{total}")
+                for index, question in enumerate(
+                    st.session_state["quiz_questions"]
+                ):
+                    if index >= len(st.session_state["quiz_answers"]):
+                        continue
 
-                        st.divider()
+                    user_answer = st.session_state["quiz_answers"][index]
+                    options = question.get("options", [])
+                    correct_index = question.get("correct_index", 0)
 
-                        st.subheader("Explanations")
+                    if (
+                        isinstance(correct_index, int)
+                        and 0 <= correct_index < len(options)
+                    ):
+                        correct_answer = options[correct_index]
+                    else:
+                        correct_answer = "Unknown"
 
-                        for index, question in enumerate(
-                            st.session_state["quiz_questions"]
-                        ):
-                            if index >= len(st.session_state["quiz_answers"]):
-                                continue
+                    if user_answer == correct_answer:
+                        st.markdown(f"✅ Question {index + 1}: Correct")
+                    else:
+                        st.markdown(f"❌ Question {index + 1}: Incorrect")
 
-                            user_answer = st.session_state["quiz_answers"][index]
-                            options = question.get("options", [])
-                            correct_index = question.get("correct_index", 0)
+                    st.write(f"**Correct answer:** {correct_answer}")
+                    st.write(f"**Explanation:** {question.get('explanation', '')}")
+                    st.divider()
 
-                            if (
-                                isinstance(correct_index, int)
-                                and 0 <= correct_index < len(options)
-                            ):
-                                correct_answer = options[correct_index]
-                            else:
-                                correct_answer = "Unknown"
-
-                            if user_answer == correct_answer:
-                                st.markdown(f"✅ Question {index + 1}: Correct")
-                            else:
-                                st.markdown(f"❌ Question {index + 1}: Incorrect")
-
-                            st.write(f"**Correct answer:** {correct_answer}")
-                            st.write(f"**Explanation:** {question.get('explanation', '')}")
-                            st.divider()
-
-                else:
-                    st.info(
-                        "Click 'Generate Quiz' after extracting pages."
-                    )
-
-else:
-    st.info("Upload a PDF to begin.")
+        else:
+            st.info("Click 'Generate Quiz' after extracting pages.")
