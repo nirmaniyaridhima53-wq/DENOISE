@@ -17,9 +17,11 @@ st.set_page_config(
     layout="wide",
 )
 
-# Activate Design System
+# Activate Design System + Background Watermark
 ui_theme.inject_design_system()
 
+# Boosted opacity (0.10) and size (90vmin) so it's clearly visible on large PC screens
+ui_theme.inject_logo_watermark(opacity=0.10, size="90vmin")
 
 # ============================================================
 # HEADER: Navigation & Status
