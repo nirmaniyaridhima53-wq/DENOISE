@@ -250,7 +250,10 @@ div.stButton > button[kind="primary"]:hover {
 
 def inject_design_system():
     """Load tokens, fonts, component styles and motion on any page."""
-    st.markdown(DESIGN_CSS, unsafe_allow_html=True)
+    st.markdown(
+        f"<style>{DESIGN_CSS}</style>",
+        unsafe_allow_html=True,
+    )
 
 
 def hero_heading(text: str):
@@ -298,27 +301,27 @@ def inject_logo_watermark(opacity: float = 0.06, size: str = "60vmin"):
         png_b64 = base64.b64encode(f.read()).decode("utf-8")
 
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" '
-        f'opacity="{opacity}">'
-        f'<image href="data:image/png;base64,{png_b64}" '
-        'width="900" height="900" preserveAspectRatio="xMidYMid meet"/>'
-        "</svg>"
-    )
-
-    svg_b64 = base64.b64encode(svg.encode("utf-8")).decode("utf-8")
-    uri = f"data:image/svg+xml;base64,{svg_b64}"
-
-    st.markdown(
-        f"""
-        <style>
-        .stApp, [data-testid="stAppViewContainer"] {{
-            background-image: url("{uri}");
-            background-repeat: no-repeat;
-            background-position: center center;
-            background-size: {size};
-            background-attachment: fixed;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
+        '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" ' 
+        f'opacity="{opacity}">' 
+        f'<image href="data:image/png;base64,{png_b64}" ' 
+        'width="900" height="900" preserveAspectRatio="xMidYMid meet"/>' 
+        "</svg>" 
+    ) 
+ 
+    svg_b64 = base64.b64encode(svg.encode("utf-8")).decode("utf-8") 
+    uri = f"data:image/svg+xml;base64,{svg_b64}" 
+ 
+    st.markdown( 
+        f""" 
+        <style> 
+        .stApp, [data-testid="stAppViewContainer"] {{ 
+            background-image: url("{uri}"); 
+            background-repeat: no-repeat; 
+            background-position: center center; 
+            background-size: {size}; 
+            background-attachment: fixed; 
+        }} 
+        </style> 
+        """, 
+        unsafe_allow_html=True, 
     )
