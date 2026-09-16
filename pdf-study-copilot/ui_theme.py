@@ -1,6 +1,7 @@
 # ui_theme.py
 # Research OS design system: tokens, fonts, animations, component styles.
-# Single source of truth for the visual language of every page.
+# STEP 4 adds: staggered entrances, status-colored alerts, micro-interactions,
+# and reduced-motion accessibility guard.
 
 import base64
 from pathlib import Path
@@ -14,7 +15,6 @@ HAS_LOGO = LOGO_PATH.exists()
 
 # ============================================================
 # DESIGN SYSTEM CSS (tokens + fonts + components + motion)
-# This is the CSS you pasted — embedded as a Python string
 # ============================================================
 
 DESIGN_CSS = """
@@ -118,7 +118,7 @@ div.stButton > button[kind="primary"]:hover {
   box-shadow: 0 0 24px var(--accent-purple-glow);
 }
 
-/* ---------- Upload dropzone (Idle / Drag-approx / Processing) ---------- */
+/* ---------- Upload dropzone ---------- */
 [data-testid="stFileUploaderDropzone"] {
   border: 2px dashed rgba(255,255,255,0.15);
   border-radius: 12px;
@@ -131,6 +131,9 @@ div.stButton > button[kind="primary"]:hover {
   background: var(--accent-teal-glow);
   transform: scale(1.01);
 }
+[data-testid="stFileUploaderDropzone"]:active {
+  transform: scale(0.99);
+}
 
 /* ---------- Tabs ---------- */
 [data-testid="stTabs"] button {
@@ -138,6 +141,10 @@ div.stButton > button[kind="primary"]:hover {
   font-weight: 600;
   color: var(--text-secondary);
   border-radius: 10px 10px 0 0;
+  transition: color var(--duration-fast) var(--ease-smooth);
+}
+[data-testid="stTabs"] button:hover {
+  color: var(--text-primary);
 }
 [data-testid="stTabs"] button[aria-selected="true"] {
   color: var(--accent-teal);
@@ -150,11 +157,52 @@ div.stButton > button[kind="primary"]:hover {
   background: var(--bg-surface-1);
   border: 1px solid rgba(255,255,255,0.06);
   border-radius: 12px;
+  transition: border-color var(--duration-fast) var(--ease-smooth);
+}
+[data-testid="stExpander"] details:hover {
+  border-color: rgba(45, 212, 191, 0.35);
 }
 
-/* ---------- Alerts ---------- */
-[data-testid="stAlert"] {
+/* ---------- STEP 4: STATUS-COLORED ALERTS + SUCCESS BOUNCE ---------- */
+div.stSuccess, [data-testid="stAlert"].stSuccess {
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.08);
   border-radius: 12px;
+  animation: scale-in var(--duration-normal) var(--ease-elastic) both;
+}
+div.stWarning, [data-testid="stAlert"].stWarning {
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  background: rgba(249, 115, 22, 0.08);
+  border-radius: 12px;
+}
+div.stError, [data-testid="stAlert"].stError {
+  border: 1px solid rgba(239, 68, 68, 0.40);
+  background: rgba(239, 68, 68, 0.10);
+  border-radius: 12px;
+}
+div.stInfo, [data-testid="stAlert"].stInfo {
+  border: 1px solid rgba(45, 212, 191, 0.30);
+  background: rgba(45, 212, 191, 0.06);
+  border-radius: 12px;
+}
+
+/* ---------- STEP 4: STAGGERED ENTRANCE FOR PAGE BLOCKS ---------- */
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div {
+  animation: fade-in-up var(--duration-normal) var(--ease-smooth) both;
+}
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(1) { animation-delay: 0ms; }
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(2) { animation-delay: 80ms; }
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(3) { animation-delay: 160ms; }
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(4) { animation-delay: 240ms; }
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(5) { animation-delay: 320ms; }
+[data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(n+6) { animation-delay: 400ms; }
+
+/* ---------- STEP 4: INPUT FOCUS GLOW ---------- */
+[data-testid="stNumberInput"] input:focus,
+[data-testid="stTextInput"] input:focus,
+textarea:focus {
+  border-color: var(--accent-teal) !important;
+  box-shadow: 0 0 0 3px var(--accent-teal-glow) !important;
 }
 
 /* ---------- Hero & components ---------- */
@@ -241,6 +289,15 @@ div.stButton > button[kind="primary"]:hover {
   animation: glow-pulse 3s ease-in-out infinite;
   filter: drop-shadow(0 0 18px var(--accent-teal-glow));
 }
+
+/* ---------- STEP 4: ACCESSIBILITY — reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
 """
 
 
@@ -250,10 +307,7 @@ div.stButton > button[kind="primary"]:hover {
 
 def inject_design_system():
     """Load tokens, fonts, component styles and motion on any page."""
-    st.markdown(
-        f"<style>{DESIGN_CSS}</style>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(DESIGN_CSS, unsafe_allow_html=True)
 
 
 def hero_heading(text: str):
@@ -301,27 +355,27 @@ def inject_logo_watermark(opacity: float = 0.06, size: str = "60vmin"):
         png_b64 = base64.b64encode(f.read()).decode("utf-8")
 
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" ' 
-        f'opacity="{opacity}">' 
-        f'<image href="data:image/png;base64,{png_b64}" ' 
-        'width="900" height="900" preserveAspectRatio="xMidYMid meet"/>' 
-        "</svg>" 
-    ) 
- 
-    svg_b64 = base64.b64encode(svg.encode("utf-8")).decode("utf-8") 
-    uri = f"data:image/svg+xml;base64,{svg_b64}" 
- 
-    st.markdown( 
-        f""" 
-        <style> 
-        .stApp, [data-testid="stAppViewContainer"] {{ 
-            background-image: url("{uri}"); 
-            background-repeat: no-repeat; 
-            background-position: center center; 
-            background-size: {size}; 
-            background-attachment: fixed; 
-        }} 
-        </style> 
-        """, 
-        unsafe_allow_html=True, 
+        '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="900" '
+        f'opacity="{opacity}">'
+        f'<image href="data:image/png;base64,{png_b64}" '
+        'width="900" height="900" preserveAspectRatio="xMidYMid meet"/>'
+        "</svg>"
+    )
+
+    svg_b64 = base64.b64encode(svg.encode("utf-8")).decode("utf-8")
+    uri = f"data:image/svg+xml;base64,{svg_b64}"
+
+    st.markdown(
+        f"""
+        <style>
+        .stApp, [data-testid="stAppViewContainer"] {{
+            background-image: url("{uri}");
+            background-repeat: no-repeat;
+            background-position: center center;
+            background-size: {size};
+            background-attachment: fixed;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
