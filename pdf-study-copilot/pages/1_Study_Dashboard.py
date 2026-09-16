@@ -1,5 +1,7 @@
 # pages/1_Study_Dashboard.py
-# PAGE 2: Research OS Study Workspace (full design system applied)
+# PAGE 2: Research OS Study Workspace
+# - HARD 2-page limit with warning
+# - Handwritten/scanned OCR pipeline (typed + handwritten in one system)
 
 import sys
 import base64
@@ -44,6 +46,28 @@ except Exception as e:
 
 
 # ============================================================
+# OCR SERVICE IMPORT (handwritten / scanned pages)
+# ============================================================
+
+OCR_IMPORT_ERROR = None
+
+try:
+    from services.ocr_service import extract_page_text as smart_extract_page
+
+    OCR_AVAILABLE = True
+except Exception as e:
+    OCR_AVAILABLE = False
+    OCR_IMPORT_ERROR = str(e)
+
+
+# ============================================================
+# GLOBAL LIMITS
+# ============================================================
+
+MAX_PAGES = 2  # HARD limit: maximum pages per analysis
+
+
+# ============================================================
 # LOGO CONFIGURATION
 # ============================================================
 
@@ -67,7 +91,6 @@ ui_theme.inject_logo_watermark(opacity=0.08, size="85vmin")
 # ============================================================
 
 def _warn_chip(label: str):
-    """Warning-colored status chip (mock mode / errors)."""
     st.markdown(
         f'<span class="status-chip" '
         f'style="border-color:rgba(249,115,22,0.45); color:var(--status-warning);">'
@@ -79,7 +102,6 @@ def _warn_chip(label: str):
 
 
 def _logo_mark(size: int = 48):
-    """Small breathing logo mark for headers."""
     if not HAS_LOGO:
         return
     logo_b64 = base64.b64encode(LOGO_PATH.read_bytes()).decode("utf-8")
@@ -102,6 +124,8 @@ def get_defaults():
         "total_pages": 0,
         "selected_pages": [],
         "extracted_text": "",
+        "page_modes": [],
+        "show_limit_warning": False,
         "topics": [],
         "youtube_links": [],
         "images": [],
@@ -131,6 +155,8 @@ def reset_learning_outputs():
     keys_to_reset = [
         "selected_pages",
         "extracted_text",
+        "page_modes",
+        "show_limit_warning",
         "topics",
         "youtube_links",
         "images",
@@ -157,26 +183,46 @@ init_state()
 
 
 # ============================================================
-# PAGE RANGE SYNC HELPERS (slider + manual typing stay in sync)
+# PAGE RANGE SYNC HELPERS (slider + typing synced, HARD 2-PAGE CLAMP)
 # ============================================================
+
+def _clamp_range(start: int, end: int):
+    """Swap if reversed, then enforce MAX_PAGES. Returns (start, end, clamped)."""
+    if end < start:
+        start, end = end, start
+
+    clamped = False
+
+    if end - start + 1 > MAX_PAGES:
+        end = start + MAX_PAGES - 1
+        clamped = True
+
+    return start, end, clamped
+
 
 def _on_slider_change():
     slider_start, slider_end = st.session_state.page_range
-    st.session_state.manual_start = int(slider_start)
-    st.session_state.manual_end = int(slider_end)
+    start, end, clamped = _clamp_range(int(slider_start), int(slider_end))
+
+    st.session_state.show_limit_warning = clamped
+
+    if clamped:
+        st.session_state.page_range = (start, end)
+
+    st.session_state.manual_start = start
+    st.session_state.manual_end = end
     st.session_state.range_source = "slider"
 
 
 def _on_manual_change():
     manual_start = int(st.session_state.manual_start)
     manual_end = int(st.session_state.manual_end)
+    start, end, clamped = _clamp_range(manual_start, manual_end)
 
-    if manual_end < manual_start:
-        manual_start, manual_end = manual_end, manual_start
-        st.session_state.manual_start = manual_start
-        st.session_state.manual_end = manual_end
-
-    st.session_state.page_range = (manual_start, manual_end)
+    st.session_state.show_limit_warning = clamped
+    st.session_state.manual_start = start
+    st.session_state.manual_end = end
+    st.session_state.page_range = (start, end)
     st.session_state.range_source = "manual"
 
 
@@ -359,20 +405,42 @@ def generate_quiz_action(num_questions):
 
 
 # ============================================================
-# PDF HELPER FUNCTIONS
+# PDF HELPER FUNCTIONS (OCR-AWARE)
 # ============================================================
 
 def extract_selected_text(doc, page_numbers):
+    """
+    Extract text from selected pages (0-based page_numbers).
+    - Typed pages  -> native text extraction
+    - Handwritten/scanned pages -> rendered to image + Gemini OCR
+    Stores per-page mode badges in st.session_state["page_modes"].
+    """
     text_parts = []
+    page_modes = []
 
     for page_number in page_numbers:
         if 0 <= page_number < len(doc):
-            page = doc.load_page(page_number)
-            page_text = page.get_text()
+            if OCR_AVAILABLE:
+                result = smart_extract_page(doc, page_number + 1)
+                text = result.get("text", "")
+                mode = result.get("mode", "empty")
+                error = result.get("error")
+            else:
+                page = doc.load_page(page_number)
+                text = page.get_text() or ""
+                mode = "typed" if text.strip() else "empty"
+                error = OCR_IMPORT_ERROR
 
-            text_parts.append(
-                f"--- Page {page_number + 1} ---\n{page_text}"
+            text_parts.append(f"--- Page {page_number + 1} ---\n{text}")
+            page_modes.append(
+                {
+                    "page": page_number + 1,
+                    "mode": mode,
+                    "error": error,
+                }
             )
+
+    st.session_state["page_modes"] = page_modes
 
     return "\n\n".join(text_parts)
 
@@ -411,7 +479,6 @@ def extract_images_from_pages(doc, page_numbers):
 
 
 def render_diagram_explanation(result, page_number):
-    """Small linear text block shown BELOW a diagram after the user clicks."""
     st.caption(f"📖 {result['explanation']}")
 
     if result.get("quote"):
@@ -448,6 +515,13 @@ with st.sidebar:
         _warn_chip("AI Offline")
         if AI_IMPORT_ERROR:
             st.caption(AI_IMPORT_ERROR)
+
+    st.caption("OCR STATUS")
+
+    if OCR_AVAILABLE:
+        st.caption("✍️ Handwriting OCR: ready (Gemini)")
+    else:
+        st.caption(f"✍️ Handwriting OCR: unavailable — {OCR_IMPORT_ERROR}")
 
     st.divider()
 
@@ -528,7 +602,7 @@ with st.container(border=True):
                 st.error(f"Unable to read PDF. Error: {e}")
 
     # --------------------------------------------------------
-    # PAGE SELECTION + EXTRACTION (inside same panel)
+    # PAGE SELECTION + EXTRACTION (HARD 2-PAGE LIMIT)
     # --------------------------------------------------------
 
     if st.session_state["pdf_bytes"] is not None:
@@ -547,7 +621,7 @@ with st.container(border=True):
             st.divider()
             st.markdown("#### 🎯 Page Selection")
 
-            default_end = min(10, total_pages)
+            default_end = min(MAX_PAGES, total_pages)
 
             if "manual_start" not in st.session_state:
                 st.session_state.manual_start = 1
@@ -555,9 +629,18 @@ with st.container(border=True):
                 st.session_state.manual_end = default_end
 
             st.info(
-                "📖 Please select 2 pages: a START page and an END page. "
-                "Type the page numbers below, or use the slider."
+                f"📖 Select up to {MAX_PAGES} pages: a START page and an END page. "
+                f"Maximum {MAX_PAGES} pages per analysis — larger selections "
+                f"are automatically reduced."
             )
+
+            # Over-limit warning banner
+            if st.session_state.get("show_limit_warning"):
+                st.warning(
+                    f"⚠️ Page limit exceeded: only {MAX_PAGES} pages can be analyzed "
+                    f"at a time. Your selection was automatically adjusted to "
+                    f"{MAX_PAGES} pages."
+                )
 
             st.slider(
                 "Select page range (slider)",
@@ -590,6 +673,7 @@ with st.container(border=True):
                     on_change=_on_manual_change
                 )
 
+            # Final safety clamp (never trust raw widget values)
             start_page = min(
                 int(st.session_state.manual_start),
                 int(st.session_state.manual_end)
@@ -601,15 +685,21 @@ with st.container(border=True):
 
             selected_pages = list(range(start_page - 1, end_page))
 
+            if len(selected_pages) > MAX_PAGES:
+                selected_pages = selected_pages[:MAX_PAGES]
+                end_page = start_page + MAX_PAGES - 1
+
             st.caption(
                 f"Selected range: page {start_page} to page {end_page}. "
-                f"Total selected pages: {len(selected_pages)}."
+                f"Total selected pages: {len(selected_pages)} / {MAX_PAGES}."
             )
 
             if st.button("⚡ Extract Selected Pages", type="primary", width="stretch"):
                 st.session_state["selected_pages"] = selected_pages
 
-                with st.spinner("Extracting text and images from selected pages..."):
+                with st.spinner(
+                    "Extracting text (running handwriting OCR if needed)..."
+                ):
                     extracted_text = extract_selected_text(doc, selected_pages)
 
                     if not extracted_text.strip():
@@ -637,6 +727,24 @@ with st.container(border=True):
                     "Selected pages processed. "
                     "Use the workspace tabs below to generate AI outputs."
                 )
+
+                # Per-page mode badges (typed vs handwritten-converted)
+                for pm in st.session_state.get("page_modes", []):
+                    if pm["mode"] == "ocr":
+                        st.success(
+                            f"✍️→⌨️ Page {pm['page']}: handwritten/scanned detected — "
+                            f"converted to typed text via OCR."
+                        )
+                    elif pm["mode"] == "typed":
+                        st.caption(f"✅ Page {pm['page']}: typed text extracted.")
+                    else:
+                        st.warning(
+                            f"️ Page {pm['page']}: no readable text found. "
+                            + (
+                                pm.get("error")
+                                or "Add GEMINI_API_KEY to enable handwriting OCR."
+                            )
+                        )
 
             if st.session_state["extracted_text"]:
                 with st.expander("View extracted text preview", expanded=False):
