@@ -1,7 +1,7 @@
 # ui_theme.py
 # Research OS design system: tokens, fonts, animations, component styles.
-# STEP 4 adds: staggered entrances, status-colored alerts, micro-interactions,
-# and reduced-motion accessibility guard.
+# FIX: entire CSS is now wrapped in <style> tags so the browser APPLIES it
+# instead of printing it as page text.
 
 import base64
 from pathlib import Path
@@ -14,10 +14,11 @@ HAS_LOGO = LOGO_PATH.exists()
 
 
 # ============================================================
-# DESIGN SYSTEM CSS (tokens + fonts + components + motion)
+# DESIGN SYSTEM CSS — MUST start with <style> and end with </style>
 # ============================================================
 
 DESIGN_CSS = """
+<style>
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
@@ -163,7 +164,7 @@ div.stButton > button[kind="primary"]:hover {
   border-color: rgba(45, 212, 191, 0.35);
 }
 
-/* ---------- STEP 4: STATUS-COLORED ALERTS + SUCCESS BOUNCE ---------- */
+/* ---------- STATUS-COLORED ALERTS + SUCCESS BOUNCE ---------- */
 div.stSuccess, [data-testid="stAlert"].stSuccess {
   border: 1px solid rgba(16, 185, 129, 0.35);
   background: rgba(16, 185, 129, 0.08);
@@ -186,7 +187,7 @@ div.stInfo, [data-testid="stAlert"].stInfo {
   border-radius: 12px;
 }
 
-/* ---------- STEP 4: STAGGERED ENTRANCE FOR PAGE BLOCKS ---------- */
+/* ---------- STAGGERED ENTRANCE FOR PAGE BLOCKS ---------- */
 [data-testid="stMain"] [data-testid="stVerticalBlock"] > div {
   animation: fade-in-up var(--duration-normal) var(--ease-smooth) both;
 }
@@ -197,7 +198,7 @@ div.stInfo, [data-testid="stAlert"].stInfo {
 [data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(5) { animation-delay: 320ms; }
 [data-testid="stMain"] [data-testid="stVerticalBlock"] > div:nth-child(n+6) { animation-delay: 400ms; }
 
-/* ---------- STEP 4: INPUT FOCUS GLOW ---------- */
+/* ---------- INPUT FOCUS GLOW ---------- */
 [data-testid="stNumberInput"] input:focus,
 [data-testid="stTextInput"] input:focus,
 textarea:focus {
@@ -290,7 +291,7 @@ textarea:focus {
   filter: drop-shadow(0 0 18px var(--accent-teal-glow));
 }
 
-/* ---------- STEP 4: ACCESSIBILITY — reduced motion ---------- */
+/* ---------- ACCESSIBILITY — reduced motion ---------- */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
@@ -298,6 +299,7 @@ textarea:focus {
     transition-duration: 0.001ms !important;
   }
 }
+</style>
 """
 
 
@@ -306,7 +308,8 @@ textarea:focus {
 # ============================================================
 
 def inject_design_system():
-    """Load tokens, fonts, component styles and motion on any page."""
+    """Load tokens, fonts, component styles and motion on any page.
+    DESIGN_CSS already contains its own <style> wrapper — do NOT remove it."""
     st.markdown(DESIGN_CSS, unsafe_allow_html=True)
 
 
