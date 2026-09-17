@@ -1,5 +1,6 @@
 # services/ai_service.py
 
+import base64
 import json
 import os
 import re
@@ -12,17 +13,16 @@ from openai import OpenAI
 
 
 # ============================================================
-# GROQ-ONLY CONFIGURATION
+# GROQ-ONLY CONFIGURATION (vision-first: qwen/qwen3.8-27b)
 # ============================================================
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
-# Text model used for topics, links, quiz, and context explanations
-DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
+DEFAULT_GROQ_MODEL = "qwen/qwen3.8-27b"
+DEFAULT_GROQ_VISION_MODEL = "qwen/qwen3.8-27b"
 
 MAX_CONTEXT_CHARS = 18000
 
-# Retry settings for temporary capacity / rate-limit errors
 MAX_RETRIES = 3
 BACKOFF_SECONDS = [2, 4, 8]
 
@@ -30,6 +30,15 @@ SYSTEM_JSON_ONLY = (
     "You are a precise educational assistant. "
     "Return only valid JSON. "
     "Do not include markdown, code fences, comments, or explanations."
+)
+
+SYSTEM_TRANSCRIBE = (
+    "You are a precise document transcription engine. "
+    "You receive page images from PDFs that may be handwritten, scanned, "
+    "or have non-selectable text. "
+    "Transcribe ALL visible text exactly as written, preserving headings, "
+    "line breaks, lists, tables and equations. "
+    "Return ONLY the transcribed text. No comments, no markdown fences."
 )
 
 
@@ -69,18 +78,6 @@ def _secret(key: str, default: Any = None) -> Any:
 
 
 def get_ai_config() -> Dict[str, str]:
-    """
-    Read Groq configuration from Streamlit secrets.
-
-    Expected secrets:
-        GROQ_API_KEY      (required) -> auth
-        GROQ_MODEL        (optional) -> TEXT model (topics/quiz/links/context)
-        GROQ_VISION_MODEL (optional) -> VISION model (image analysis)
-                                        leave unset if Groq has none
-
-    Returns text model and vision model SEPARATELY.
-    vision_model is an empty string when no vision model is configured.
-    """
     api_key = _secret("GROQ_API_KEY")
 
     if not api_key or str(api_key).strip() == "":
@@ -96,14 +93,13 @@ def get_ai_config() -> Dict[str, str]:
             "Please replace the placeholder GROQ_API_KEY with your real key."
         )
 
-    # TEXT model
     model = str(_secret("GROQ_MODEL", DEFAULT_GROQ_MODEL)).strip()
     if not model:
         model = DEFAULT_GROQ_MODEL
 
-    # VISION model — NO silent fallback to the text model.
-    # Empty string = "no vision model available" (vision step will be skipped).
-    vision_model = str(_secret("GROQ_VISION_MODEL", "")).strip()
+    vision_model = str(_secret("GROQ_VISION_MODEL", DEFAULT_GROQ_VISION_MODEL)).strip()
+    if not vision_model:
+        vision_model = DEFAULT_GROQ_VISION_MODEL
 
     return {
         "provider": "groq",
@@ -181,8 +177,7 @@ def _clean_json_response(text: str) -> Dict[str, Any]:
 
 
 # ============================================================
-# CORE AI CALL
-# (retry with backoff + empty-reply token-budget boost + JSON repair)
+# CORE TEXT AI CALL (retry + JSON repair)
 # ============================================================
 
 def chat_json(
@@ -203,26 +198,17 @@ def chat_json(
                 temperature=temperature,
                 max_tokens=token_budget,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt,
-                    },
-                    {
-                        "role": "user",
-                        "content": user_prompt,
-                    },
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
                 ],
             )
 
             content = response.choices[0].message.content or ""
             parsed = _clean_json_response(content)
 
-            # SUCCESS: valid JSON received
             if parsed:
                 return parsed
 
-            # EMPTY reply: reasoning models (like gpt-oss) can burn the whole
-            # token budget on internal thinking -> retry with 3x budget
             if not content.strip():
                 last_error = Exception(
                     "Model returned an empty reply (token budget too small?)."
@@ -230,7 +216,6 @@ def chat_json(
                 token_budget = token_budget * 3
                 continue
 
-            # PROSE reply (not JSON): one repair attempt forcing JSON output
             repair_response = client.chat.completions.create(
                 model=config["model"],
                 temperature=0.0,
@@ -271,6 +256,89 @@ def chat_json(
 
     st.error(f"AI request failed after retries: {last_error}")
     return {}
+
+
+# ============================================================
+# VISION TRANSCRIPTION: page images -> typed text (NO text extractor)
+# ============================================================
+
+def transcribe_page_images(
+    page_images: List[bytes],
+    page_numbers: List[int],
+) -> tuple:
+    """
+    Send rendered page images DIRECTLY to the Groq vision model
+    (qwen/qwen3.8-27b). Works for handwritten, scanned and
+    non-text-selectable PDFs.
+
+    Returns: (transcribed_text, error_or_None)
+    """
+    try:
+        client, config = _get_client()
+    except Exception as e:
+        return "", str(e)
+
+    model = config.get("vision_model") or config["model"]
+
+    content_parts = [
+        {
+            "type": "text",
+            "text": (
+                "Transcribe these document pages in order. "
+                "Preserve structure exactly. Return only the transcribed text."
+            ),
+        }
+    ]
+
+    for image_bytes, page_number in zip(page_images, page_numbers):
+        content_parts.append(
+            {"type": "text", "text": f"--- Page {page_number} ---"}
+        )
+        content_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,"
+                    + base64.b64encode(image_bytes).decode("utf-8")
+                },
+            }
+        )
+
+    last_error = None
+    token_budget = 4000
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                temperature=0.0,
+                max_tokens=token_budget,
+                messages=[
+                    {"role": "system", "content": SYSTEM_TRANSCRIBE},
+                    {"role": "user", "content": content_parts},
+                ],
+            )
+
+            text = (response.choices[0].message.content or "").strip()
+            text = _strip_code_fences(text)
+
+            if text:
+                return text, None
+
+            last_error = Exception("Vision model returned an empty transcription.")
+            token_budget = token_budget * 2
+            continue
+
+        except Exception as e:
+            last_error = e
+
+            if _is_retryable_error(e) and attempt < MAX_RETRIES - 1:
+                time.sleep(BACKOFF_SECONDS[attempt])
+                continue
+
+            break
+
+    return "", str(last_error)
 
 
 # ============================================================
