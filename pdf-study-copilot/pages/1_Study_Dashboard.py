@@ -1,19 +1,20 @@
 # pages/1_Study_Dashboard.py
 # PAGE 2: Research OS Study Workspace
-# - HARD 2-page limit with warning
-# - Handwritten/scanned OCR pipeline (typed + handwritten in one system)
+# - NO slider: user types exactly 2 pages (hard limit, warning on overflow)
+# - NO text extractor: page images go DIRECTLY to Groq Vision qwen/qwen3.8-27b
+# - Works for handwritten notes, scanned & non-text-selectable PDFs
 
 import sys
 import base64
 from pathlib import Path
 
 import streamlit as st
-import pymupdf as fitz  # modern PyMuPDF import (no deprecation warning)
+import pymupdf as fitz  # rendering pages to images only (no text extraction)
 import urllib.parse
 
 
 # ============================================================
-# PATH BOOTSTRAP (lets pages/ import root-level packages)
+# PATH BOOTSTRAP
 # ============================================================
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -25,7 +26,7 @@ import ui_theme  # design system + watermark
 
 
 # ============================================================
-# AI SERVICE IMPORT (text AI + vision AI)
+# AI SERVICE IMPORT (text AI + vision transcription + vision explain)
 # ============================================================
 
 AI_IMPORT_ERROR = None
@@ -36,6 +37,7 @@ try:
         generate_topics as ai_generate_topics,
         generate_youtube_links as ai_generate_youtube_links,
         generate_quiz as ai_generate_quiz,
+        transcribe_page_images as ai_transcribe_pages,
     )
     from services.vision_service import explain_image as ai_explain_image
 
@@ -46,25 +48,11 @@ except Exception as e:
 
 
 # ============================================================
-# OCR SERVICE IMPORT (handwritten / scanned pages)
+# GLOBAL LIMITS & MODEL LABEL
 # ============================================================
 
-OCR_IMPORT_ERROR = None
-
-try:
-    from services.ocr_service import extract_page_text as smart_extract_page
-
-    OCR_AVAILABLE = True
-except Exception as e:
-    OCR_AVAILABLE = False
-    OCR_IMPORT_ERROR = str(e)
-
-
-# ============================================================
-# GLOBAL LIMITS
-# ============================================================
-
-MAX_PAGES = 2  # HARD limit: maximum pages per analysis
+MAX_PAGES = 2  # HARD limit: exactly up to 2 pages per analysis
+VISION_MODEL_LABEL = "qwen/qwen3.8-27b"
 
 
 # ============================================================
@@ -81,13 +69,12 @@ st.set_page_config(
     layout="wide",
 )
 
-# Design system + faded logo behind workspace content
 ui_theme.inject_design_system()
 ui_theme.inject_logo_watermark(opacity=0.08, size="85vmin")
 
 
 # ============================================================
-# SMALL LOCAL HELPERS (design chips)
+# LOCAL HELPERS (design chips)
 # ============================================================
 
 def _warn_chip(label: str):
@@ -124,7 +111,6 @@ def get_defaults():
         "total_pages": 0,
         "selected_pages": [],
         "extracted_text": "",
-        "page_modes": [],
         "show_limit_warning": False,
         "topics": [],
         "youtube_links": [],
@@ -155,7 +141,6 @@ def reset_learning_outputs():
     keys_to_reset = [
         "selected_pages",
         "extracted_text",
-        "page_modes",
         "show_limit_warning",
         "topics",
         "youtube_links",
@@ -171,10 +156,7 @@ def reset_learning_outputs():
 
     clear_answer_keys()
 
-    if "page_range" in st.session_state:
-        del st.session_state["page_range"]
-
-    for widget_key in ["manual_start", "manual_end", "range_source"]:
+    for widget_key in ["manual_start", "manual_end"]:
         if widget_key in st.session_state:
             del st.session_state[widget_key]
 
@@ -183,51 +165,29 @@ init_state()
 
 
 # ============================================================
-# PAGE RANGE SYNC HELPERS (slider + typing synced, HARD 2-PAGE CLAMP)
+# PAGE INPUT HELPERS (typed boxes only, HARD 2-PAGE CLAMP, NO SLIDER)
 # ============================================================
-
-def _clamp_range(start: int, end: int):
-    """Swap if reversed, then enforce MAX_PAGES. Returns (start, end, clamped)."""
-    if end < start:
-        start, end = end, start
-
-    clamped = False
-
-    if end - start + 1 > MAX_PAGES:
-        end = start + MAX_PAGES - 1
-        clamped = True
-
-    return start, end, clamped
-
-
-def _on_slider_change():
-    slider_start, slider_end = st.session_state.page_range
-    start, end, clamped = _clamp_range(int(slider_start), int(slider_end))
-
-    st.session_state.show_limit_warning = clamped
-
-    if clamped:
-        st.session_state.page_range = (start, end)
-
-    st.session_state.manual_start = start
-    st.session_state.manual_end = end
-    st.session_state.range_source = "slider"
-
 
 def _on_manual_change():
     manual_start = int(st.session_state.manual_start)
     manual_end = int(st.session_state.manual_end)
-    start, end, clamped = _clamp_range(manual_start, manual_end)
+
+    if manual_end < manual_start:
+        manual_start, manual_end = manual_end, manual_start
+
+    clamped = False
+
+    if manual_end - manual_start + 1 > MAX_PAGES:
+        manual_end = manual_start + MAX_PAGES - 1
+        clamped = True
 
     st.session_state.show_limit_warning = clamped
-    st.session_state.manual_start = start
-    st.session_state.manual_end = end
-    st.session_state.page_range = (start, end)
-    st.session_state.range_source = "manual"
+    st.session_state.manual_start = manual_start
+    st.session_state.manual_end = manual_end
 
 
 # ============================================================
-# MOCK FUNCTIONS (used when AI is not configured)
+# MOCK FUNCTIONS (used only when AI is not configured)
 # ============================================================
 
 def mock_generate_topics(text):
@@ -342,7 +302,7 @@ def generate_topics_action():
     text = st.session_state.get("extracted_text", "")
 
     if not text.strip():
-        st.warning("No extracted text found. Extract pages first.")
+        st.warning("No extracted text found. Analyze pages first.")
         return
 
     if is_ai_ready():
@@ -363,7 +323,7 @@ def generate_links_action():
     topics = st.session_state.get("topics", [])
 
     if not text.strip() and not topics:
-        st.warning("Extract pages first before generating study links.")
+        st.warning("Analyze pages first before generating study links.")
         return
 
     if is_ai_ready():
@@ -383,7 +343,7 @@ def generate_quiz_action(num_questions):
     text = st.session_state.get("extracted_text", "")
 
     if not text.strip():
-        st.warning("Extract pages first before generating a quiz.")
+        st.warning("Analyze pages first before generating a quiz.")
         return
 
     clear_answer_keys()
@@ -405,44 +365,14 @@ def generate_quiz_action(num_questions):
 
 
 # ============================================================
-# PDF HELPER FUNCTIONS (OCR-AWARE)
+# PAGE RENDERING (images only — NO text extraction)
 # ============================================================
 
-def extract_selected_text(doc, page_numbers):
-    """
-    Extract text from selected pages (0-based page_numbers).
-    - Typed pages  -> native text extraction
-    - Handwritten/scanned pages -> rendered to image + Gemini OCR
-    Stores per-page mode badges in st.session_state["page_modes"].
-    """
-    text_parts = []
-    page_modes = []
-
-    for page_number in page_numbers:
-        if 0 <= page_number < len(doc):
-            if OCR_AVAILABLE:
-                result = smart_extract_page(doc, page_number + 1)
-                text = result.get("text", "")
-                mode = result.get("mode", "empty")
-                error = result.get("error")
-            else:
-                page = doc.load_page(page_number)
-                text = page.get_text() or ""
-                mode = "typed" if text.strip() else "empty"
-                error = OCR_IMPORT_ERROR
-
-            text_parts.append(f"--- Page {page_number + 1} ---\n{text}")
-            page_modes.append(
-                {
-                    "page": page_number + 1,
-                    "mode": mode,
-                    "error": error,
-                }
-            )
-
-    st.session_state["page_modes"] = page_modes
-
-    return "\n\n".join(text_parts)
+def render_page_png(doc, page_number: int, dpi: int = 150) -> bytes:
+    """Render one PDF page (1-based) to PNG bytes for the vision model."""
+    page = doc.load_page(page_number - 1)
+    pix = page.get_pixmap(dpi=dpi)
+    return pix.tobytes("png")
 
 
 def extract_images_from_pages(doc, page_numbers):
@@ -488,7 +418,7 @@ def render_diagram_explanation(result, page_number):
 
 
 # ============================================================
-# SIDEBAR (styled workspace panel)
+# SIDEBAR
 # ============================================================
 
 with st.sidebar:
@@ -507,7 +437,8 @@ with st.sidebar:
 
         if status.get("configured"):
             ui_theme.status_chip("AI Engine Active")
-            st.caption(f"Model: `{status.get('model')}`")
+            st.caption(f"Text model: `{status.get('model')}`")
+            st.caption(f"Vision model: `{VISION_MODEL_LABEL}`")
         else:
             _warn_chip("Mock Mode")
             st.caption(status.get("error") or "Configure Groq secrets for real AI.")
@@ -515,13 +446,6 @@ with st.sidebar:
         _warn_chip("AI Offline")
         if AI_IMPORT_ERROR:
             st.caption(AI_IMPORT_ERROR)
-
-    st.caption("OCR STATUS")
-
-    if OCR_AVAILABLE:
-        st.caption("✍️ Handwriting OCR: ready (Gemini)")
-    else:
-        st.caption(f"✍️ Handwriting OCR: unavailable — {OCR_IMPORT_ERROR}")
 
     st.divider()
 
@@ -561,7 +485,7 @@ with h_col2:
 
 with h_col3:
     if is_ai_ready():
-        ui_theme.status_chip("Analysis Ready")
+        ui_theme.status_chip("Vision Ready")
     else:
         _warn_chip("Mock Mode")
 
@@ -569,7 +493,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 
 # ============================================================
-# PARSING OS PANEL (upload + page selection + extract)
+# PARSING OS PANEL (upload + typed 2-page input + vision analysis)
 # ============================================================
 
 with st.container(border=True):
@@ -602,7 +526,7 @@ with st.container(border=True):
                 st.error(f"Unable to read PDF. Error: {e}")
 
     # --------------------------------------------------------
-    # PAGE SELECTION + EXTRACTION (HARD 2-PAGE LIMIT)
+    # PAGE INPUT: TWO TYPED BOXES ONLY (NO SLIDER)
     # --------------------------------------------------------
 
     if st.session_state["pdf_bytes"] is not None:
@@ -629,27 +553,16 @@ with st.container(border=True):
                 st.session_state.manual_end = default_end
 
             st.info(
-                f"📖 Select up to {MAX_PAGES} pages: a START page and an END page. "
-                f"Maximum {MAX_PAGES} pages per analysis — larger selections "
-                f"are automatically reduced."
+                f"📖 Type the START page and END page to analyze. "
+                f"Maximum {MAX_PAGES} pages at a time — larger ranges are "
+                f"automatically reduced. Handwritten & scanned pages supported."
             )
 
-            # Over-limit warning banner
             if st.session_state.get("show_limit_warning"):
                 st.warning(
                     f"⚠️ Page limit exceeded: only {MAX_PAGES} pages can be analyzed "
-                    f"at a time. Your selection was automatically adjusted to "
-                    f"{MAX_PAGES} pages."
+                    f"at a time. Your end page was automatically adjusted."
                 )
-
-            st.slider(
-                "Select page range (slider)",
-                min_value=1,
-                max_value=total_pages,
-                value=(1, default_end),
-                key="page_range",
-                on_change=_on_slider_change
-            )
 
             manual_col1, manual_col2 = st.columns(2)
 
@@ -673,7 +586,7 @@ with st.container(border=True):
                     on_change=_on_manual_change
                 )
 
-            # Final safety clamp (never trust raw widget values)
+            # Final safety clamp
             start_page = min(
                 int(st.session_state.manual_start),
                 int(st.session_state.manual_end)
@@ -690,25 +603,34 @@ with st.container(border=True):
                 end_page = start_page + MAX_PAGES - 1
 
             st.caption(
-                f"Selected range: page {start_page} to page {end_page}. "
-                f"Total selected pages: {len(selected_pages)} / {MAX_PAGES}."
+                f"Selected: page {start_page} to page {end_page} • "
+                f"{len(selected_pages)} / {MAX_PAGES} pages • "
+                f"sent as images to Groq Vision ({VISION_MODEL_LABEL})"
             )
 
-            if st.button("⚡ Extract Selected Pages", type="primary", width="stretch"):
+            # ----------------------------------------------------
+            # VISION ANALYSIS: pages -> images -> Groq Vision AI
+            # ----------------------------------------------------
+
+            if st.button("⚡ Analyze Pages with Vision AI", type="primary", width="stretch"):
                 st.session_state["selected_pages"] = selected_pages
 
                 with st.spinner(
-                    "Extracting text (running handwriting OCR if needed)..."
+                    f"Sending pages as images to Groq Vision ({VISION_MODEL_LABEL})..."
                 ):
-                    extracted_text = extract_selected_text(doc, selected_pages)
+                    page_pngs = []
+                    page_nums = []
 
-                    if not extracted_text.strip():
-                        st.warning(
-                            "No extractable text found on the selected pages. "
-                            "This PDF may be scanned or image-based."
-                        )
+                    for zero_based in selected_pages:
+                        page_pngs.append(render_page_png(doc, zero_based + 1))
+                        page_nums.append(zero_based + 1)
 
-                    st.session_state["extracted_text"] = extracted_text
+                    if is_ai_ready():
+                        text, error = ai_transcribe_pages(page_pngs, page_nums)
+                    else:
+                        text, error = "", "AI not configured (mock mode)."
+
+                    st.session_state["extracted_text"] = text
                     st.session_state["images"] = extract_images_from_pages(
                         doc,
                         selected_pages
@@ -723,31 +645,23 @@ with st.container(border=True):
 
                     clear_answer_keys()
 
-                st.success(
-                    "Selected pages processed. "
-                    "Use the workspace tabs below to generate AI outputs."
-                )
+                if error:
+                    st.error(f"Vision analysis failed: {error}")
+                else:
+                    st.success(
+                        "Pages read directly by Groq Vision AI. "
+                        "Use the workspace tabs below to generate AI outputs."
+                    )
 
-                # Per-page mode badges (typed vs handwritten-converted)
-                for pm in st.session_state.get("page_modes", []):
-                    if pm["mode"] == "ocr":
-                        st.success(
-                            f"✍️→⌨️ Page {pm['page']}: handwritten/scanned detected — "
-                            f"converted to typed text via OCR."
-                        )
-                    elif pm["mode"] == "typed":
-                        st.caption(f"✅ Page {pm['page']}: typed text extracted.")
-                    else:
-                        st.warning(
-                            f"️ Page {pm['page']}: no readable text found. "
-                            + (
-                                pm.get("error")
-                                or "Add GEMINI_API_KEY to enable handwriting OCR."
-                            )
+                    for page_num in page_nums:
+                        st.caption(
+                            f"👁️ Page {page_num}: image sent directly to "
+                            f"{VISION_MODEL_LABEL} → converted to typed text "
+                            f"(handwritten / scanned supported)."
                         )
 
             if st.session_state["extracted_text"]:
-                with st.expander("View extracted text preview", expanded=False):
+                with st.expander("View AI-transcribed text preview", expanded=False):
                     st.text(st.session_state["extracted_text"][:2000])
 
 
@@ -830,7 +744,7 @@ if st.session_state["extracted_text"]:
                     )
 
     # --------------------------------------------------------
-    # TAB 3: DIAGRAMS + VISION EXPLANATIONS
+    # TAB 3: DIAGRAMS (pure vision explanations, no page text)
     # --------------------------------------------------------
 
     with tab3:
@@ -850,14 +764,14 @@ if st.session_state["extracted_text"]:
 
         if not st.session_state["images"]:
             st.info(
-                "No images found on the selected pages. "
-                "Some PDFs store figures as vector graphics or scanned content."
+                "No embedded images found on the selected pages. "
+                "The full pages were still read by the Vision AI."
             )
         else:
             st.write(
                 f"Found {len(st.session_state['images'])} image(s). "
                 "Each diagram is shown first — click "
-                "'Click to reveal explanation' to see what it means."
+                "'Click to reveal explanation' for a visual analysis."
             )
 
             for index, image in enumerate(st.session_state["images"]):
@@ -884,11 +798,10 @@ if st.session_state["extracted_text"]:
                             key=f"explain_btn_{index}"
                         ):
                             with st.spinner("Analyzing diagram visually..."):
-                                page_text = doc.load_page(page_number - 1).get_text()
-
+                                # Pure vision: NO page text passed
                                 result = ai_explain_image(
                                     image["bytes"],
-                                    page_text,
+                                    "",
                                     page_number,
                                     index + 1,
                                 )
@@ -1006,4 +919,4 @@ if st.session_state["extracted_text"]:
                     st.divider()
 
         else:
-            st.info("Click 'Generate Quiz' after extracting pages.")
+            st.info("Click 'Generate Quiz' after analyzing pages.")
